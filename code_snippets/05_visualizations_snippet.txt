@@ -1,0 +1,490 @@
+============================================================
+05_visualizations.ipynb
+============================================================
+
+CELL 1 - Install packages
+
+# Install plotting packages for thesis figures.
+# Kaleido 0.2.1 avoids Chrome-export issues that can appear in Colab with newer versions.
+!pip -q install pandas pyarrow matplotlib seaborn plotly kaleido==0.2.1 wordcloud sentence-transformers umap-learn scikit-learn
+
+
+CELL 2 - Mount Drive and load paths
+
+# Mount Google Drive and define the same project folders used in the pipeline.
+from google.colab import drive
+drive.mount("/content/drive")
+
+from pathlib import Path
+import pandas as pd
+import numpy as np
+
+PROJECT_DIR = Path("/content/drive/MyDrive/Thesis_Clean_Pipeline")
+DATA_DIR = PROJECT_DIR / "data"
+INTERIM_DIR = DATA_DIR / "interim"
+OUTPUT_DIR = DATA_DIR / "outputs"
+FIGURE_DIR = OUTPUT_DIR / "figures"
+
+FIGURE_DIR.mkdir(parents=True, exist_ok=True)
+
+topic_codebook_path = OUTPUT_DIR / "topic_codebook.csv"
+micro_sem_path = OUTPUT_DIR / "sem_dataset_micro.csv"
+macro_sem_path = OUTPUT_DIR / "sem_dataset_macro.csv"
+scored_tweets_path = INTERIM_DIR / "tweets_with_topics_scores.parquet"
+
+# Use fallback file names if a file was manually downloaded or renamed.
+if not topic_codebook_path.exists():
+    for candidate in [OUTPUT_DIR / "topic_codebook (1).csv", PROJECT_DIR / "topic_codebook.csv", PROJECT_DIR / "topic_codebook (1).csv"]:
+        if candidate.exists():
+            topic_codebook_path = candidate
+            break
+
+print("Figure output folder:", FIGURE_DIR)
+print("Topic codebook path:", topic_codebook_path)
+
+
+CELL 3 - Load topic codebook and SEM data
+
+# Load the topic codebook and final SEM salience tables.
+topic_codebook = pd.read_csv(topic_codebook_path)
+micro_sem = pd.read_csv(micro_sem_path)
+macro_sem = pd.read_csv(macro_sem_path)
+
+# Make sure topic IDs and assigned counts are numeric before plotting.
+topic_codebook["topic"] = pd.to_numeric(topic_codebook["topic"], errors="coerce").astype("Int64")
+topic_codebook["assigned_count"] = pd.to_numeric(topic_codebook["assigned_count"], errors="coerce")
+topic_codebook = topic_codebook.dropna(subset=["topic", "assigned_count"]).copy()
+topic_codebook["topic"] = topic_codebook["topic"].astype(int)
+
+print("Topic codebook rows:", len(topic_codebook))
+print("Micro SEM rows:", len(micro_sem))
+print("Macro SEM rows:", len(macro_sem))
+display(topic_codebook.head())
+display(micro_sem.head())
+
+
+CELL 4 - Define selected thesis topics and labels
+
+# These topics are the mapped political topics kept for interpretation or modelling.
+TOPIC_LABELS = {
+    1: "Race discourse",
+    2: "Israel/Palestine",
+    3: "Gender and abortion",
+    5: "Border security",
+    6: "Felon conviction",
+    7: "Project 2025",
+    11: "Authoritarian rhetoric",
+    14: "Inflation and economy",
+    16: "Crypto and markets",
+    17: "Tax policy",
+    18: "COVID and vaccines",
+    19: "Healthcare and Medicare",
+    21: "Fentanyl and drugs",
+    24: "Climate and environment",
+    25: "Student loans",
+    33: "Labor and unions",
+    41: "China and geopolitics",
+}
+
+# These topics were visible in the model but excluded from SEM because they were meta, campaign, celebrity, or noise topics.
+EXCLUDED_TOPIC_LABELS = {
+    0: "Matt Gaetz nomination",
+    4: "Secret Service/FBI/Hunter laptop",
+    9: "Convention locations",
+    10: "Supporters/fans",
+    12: "Patriotic greetings",
+    15: "Weird/weirdo rhetoric",
+    22: "Winning/losing talk",
+    23: "Resignation/drop-out talk",
+    27: "Presidential history",
+    28: "Rally/crowd size",
+    29: "Beach/vacation",
+    30: "Birthday/greetings",
+    31: "Taylor Swift",
+    32: "Teleprompter/speaking",
+    34: "George Clooney",
+    35: "Campaign hashtags",
+    36: "Flags/patriotism",
+    37: "McDonald's",
+    38: "Shower/daughter allegations",
+    40: "Insult/body rhetoric",
+}
+
+# Attach readable labels and a retained/excluded status for visualization.
+topic_codebook["topic_label"] = topic_codebook["topic"].map(TOPIC_LABELS).fillna(
+    topic_codebook["topic"].map(EXCLUDED_TOPIC_LABELS)
+).fillna("Other / not interpreted")
+topic_codebook["topic_status"] = np.where(topic_codebook["topic"].isin(TOPIC_LABELS), "Retained", "Excluded or not interpreted")
+
+# Keep only the most useful keywords so labels remain readable in a thesis figure.
+def first_keywords(keyword_string, n=4):
+    words = [w.strip() for w in str(keyword_string).split(",") if w.strip()]
+    return ", ".join(words[:n])
+
+topic_codebook["short_keywords"] = topic_codebook["keywords"].apply(lambda x: first_keywords(x, 4))
+display(topic_codebook[["topic", "assigned_count", "topic_label", "topic_status", "short_keywords"]].head(15))
+
+
+CELL 5 - Figure: retained topic overview by assigned tweet count
+
+# Plot the retained political topics by assigned tweet count.
+import matplotlib.pyplot as plt
+import seaborn as sns
+import textwrap
+
+plt.rcParams["font.family"] = "serif"
+plt.rcParams["font.serif"] = ["Times New Roman", "DejaVu Serif"]
+plt.rcParams["figure.dpi"] = 150
+sns.set_theme(style="whitegrid")
+
+retained_topics = topic_codebook[topic_codebook["topic"].isin(TOPIC_LABELS)].copy()
+retained_topics = retained_topics.sort_values("assigned_count", ascending=True)
+
+# Wrap labels so the topic name and keywords fit inside one figure.
+retained_topics["plot_label"] = retained_topics.apply(
+    lambda r: "\n".join(textwrap.wrap(f"{r['topic']}: {r['topic_label']} ({r['short_keywords']})", width=42)),
+    axis=1
+)
+
+fig_height = max(7.5, 0.38 * len(retained_topics))
+fig, ax = plt.subplots(figsize=(8.2, fig_height))
+ax.barh(retained_topics["plot_label"], retained_topics["assigned_count"], color="#7f7f7f", edgecolor="black", linewidth=0.6)
+
+ax.set_xlabel("Assigned tweets")
+ax.set_ylabel("")
+ax.set_title("Retained BERTopic themes used for salience aggregation", fontweight="bold", pad=12)
+ax.xaxis.set_major_formatter(lambda x, pos: f"{int(x):,}")
+ax.grid(axis="x", color="#d9d9d9", linewidth=0.7)
+ax.grid(axis="y", visible=False)
+
+for spine in ["top", "right"]:
+    ax.spines[spine].set_visible(False)
+
+plt.tight_layout()
+topic_overview_path = FIGURE_DIR / "topic_overview_retained_counts.png"
+plt.savefig(topic_overview_path, dpi=300, bbox_inches="tight")
+plt.show()
+
+print("Saved:", topic_overview_path)
+
+
+CELL 6 - Figure: keyword word cloud for retained topics
+
+# Build a simple keyword cloud from retained topic labels; larger assigned topics contribute more repeated keywords.
+from wordcloud import WordCloud
+
+keyword_chunks = []
+for _, row in retained_topics.iterrows():
+    keywords = [w.strip().replace(" ", "_") for w in str(row["keywords"]).split(",") if w.strip()]
+    repeats = max(1, int(row["assigned_count"] / retained_topics["assigned_count"].max() * 8))
+    keyword_chunks.extend(keywords[:10] * repeats)
+
+wordcloud_text = " ".join(keyword_chunks)
+
+wc = WordCloud(
+    width=2200,
+    height=1200,
+    background_color="white",
+    colormap="YlGnBu",
+    prefer_horizontal=0.9,
+    collocations=False,
+    random_state=42,
+    max_words=120,
+)
+
+fig, ax = plt.subplots(figsize=(8.2, 4.6))
+ax.imshow(wc.generate(wordcloud_text), interpolation="bilinear")
+ax.axis("off")
+ax.set_title("Keyword structure of retained political topics", fontweight="bold", pad=10)
+
+plt.tight_layout()
+keyword_cloud_path = FIGURE_DIR / "topic_keywords_retained_wordcloud.png"
+plt.savefig(keyword_cloud_path, dpi=300, bbox_inches="tight")
+plt.show()
+
+print("Saved:", keyword_cloud_path)
+
+
+CELL 7 - Figure: topic map from 2D-reduced sentence embeddings
+
+# Create a BERTopic-style 2D topic map from a sample of assigned tweets.
+# This figure is for visualization only; it does not retrain or change the final topic model.
+from sentence_transformers import SentenceTransformer
+from umap import UMAP
+from sklearn.preprocessing import normalize
+
+TOPIC_MAP_SAMPLE_SIZE = 25000
+TOPIC_MAP_RANDOM_STATE = 42
+TOPIC_MAP_MODEL = "all-mpnet-base-v2"
+
+if scored_tweets_path.exists():
+    # Load only columns needed for a lightweight topic-map sample.
+    try:
+        topic_map_cols = ["cleaned_text", "topic"]
+        topic_docs = pd.read_parquet(scored_tweets_path, columns=topic_map_cols)
+        text_col = "cleaned_text"
+    except Exception:
+        topic_map_cols = ["rawContent", "topic"]
+        topic_docs = pd.read_parquet(scored_tweets_path, columns=topic_map_cols)
+        text_col = "rawContent"
+
+    topic_docs = topic_docs.dropna(subset=[text_col, "topic"]).copy()
+    topic_docs[text_col] = topic_docs[text_col].astype(str)
+    topic_docs["topic"] = topic_docs["topic"].astype(int)
+    topic_docs = topic_docs[topic_docs[text_col].str.split().str.len() >= 3].copy()
+
+    # Sample because the full corpus would make the figure slow and visually unreadable.
+    topic_docs_sample = topic_docs.sample(
+        n=min(TOPIC_MAP_SAMPLE_SIZE, len(topic_docs)),
+        random_state=TOPIC_MAP_RANDOM_STATE
+    ).reset_index(drop=True)
+
+    # Mark retained topics with their thesis labels; everything else stays in light gray.
+    topic_docs_sample["topic_label"] = topic_docs_sample["topic"].map(TOPIC_LABELS)
+    topic_docs_sample["topic_group"] = topic_docs_sample["topic_label"].fillna("Other / excluded topics")
+
+    embedder = SentenceTransformer(TOPIC_MAP_MODEL)
+    sample_embeddings = embedder.encode(
+        topic_docs_sample[text_col].tolist(),
+        batch_size=512,
+        show_progress_bar=True,
+        normalize_embeddings=True,
+        convert_to_numpy=True
+    )
+    sample_embeddings = normalize(sample_embeddings)
+
+    reducer = UMAP(
+        n_neighbors=15,
+        n_components=2,
+        min_dist=0.0,
+        metric="cosine",
+        random_state=TOPIC_MAP_RANDOM_STATE
+    )
+    coords = reducer.fit_transform(sample_embeddings)
+    topic_docs_sample["x"] = coords[:, 0]
+    topic_docs_sample["y"] = coords[:, 1]
+
+    # Plot gray background points first, then retained political topics on top.
+    retained_sample = topic_docs_sample[topic_docs_sample["topic"].isin(TOPIC_LABELS)].copy()
+    other_sample = topic_docs_sample[~topic_docs_sample["topic"].isin(TOPIC_LABELS)].copy()
+
+    palette = sns.color_palette("Set2", n_colors=retained_sample["topic_group"].nunique())
+    palette_map = dict(zip(sorted(retained_sample["topic_group"].unique()), palette))
+
+    fig, ax = plt.subplots(figsize=(8.2, 5.4))
+    ax.scatter(
+        other_sample["x"],
+        other_sample["y"],
+        s=4,
+        c="#d9d9d9",
+        alpha=0.22,
+        linewidths=0,
+        label="Other / excluded topics"
+    )
+
+    for label, group in retained_sample.groupby("topic_group"):
+        ax.scatter(
+            group["x"],
+            group["y"],
+            s=7,
+            color=palette_map[label],
+            alpha=0.72,
+            linewidths=0,
+            label=label
+        )
+
+    ax.set_title("Topics visualized through 2D-reduced sentence embeddings", fontweight="bold", pad=10)
+    ax.set_xlabel("UMAP dimension 1")
+    ax.set_ylabel("UMAP dimension 2")
+    ax.grid(color="#eeeeee", linewidth=0.5)
+
+    for spine in ["top", "right"]:
+        ax.spines[spine].set_visible(False)
+
+    ax.legend(
+        loc="center left",
+        bbox_to_anchor=(1.02, 0.5),
+        frameon=False,
+        fontsize=8,
+        markerscale=2.0
+    )
+
+    plt.tight_layout()
+    topic_map_path = FIGURE_DIR / "topic_map_2d_sentence_embeddings.png"
+    plt.savefig(topic_map_path, dpi=300, bbox_inches="tight")
+    plt.show()
+
+    print("Saved:", topic_map_path)
+else:
+    print("Skipped 2D topic map because scored tweet parquet was not found:", scored_tweets_path)
+
+
+CELL 8 - Define US state abbreviations for maps
+
+# Plotly's US choropleth needs two-letter state abbreviations.
+STATE_ABBR = {
+    "Alabama": "AL", "Alaska": "AK", "Arizona": "AZ", "Arkansas": "AR", "California": "CA",
+    "Colorado": "CO", "Connecticut": "CT", "Delaware": "DE", "Florida": "FL", "Georgia": "GA",
+    "Hawaii": "HI", "Idaho": "ID", "Illinois": "IL", "Indiana": "IN", "Iowa": "IA",
+    "Kansas": "KS", "Kentucky": "KY", "Louisiana": "LA", "Maine": "ME", "Maryland": "MD",
+    "Massachusetts": "MA", "Michigan": "MI", "Minnesota": "MN", "Mississippi": "MS",
+    "Missouri": "MO", "Montana": "MT", "Nebraska": "NE", "Nevada": "NV", "New Hampshire": "NH",
+    "New Jersey": "NJ", "New Mexico": "NM", "New York": "NY", "North Carolina": "NC",
+    "North Dakota": "ND", "Ohio": "OH", "Oklahoma": "OK", "Oregon": "OR", "Pennsylvania": "PA",
+    "Rhode Island": "RI", "South Carolina": "SC", "South Dakota": "SD", "Tennessee": "TN",
+    "Texas": "TX", "Utah": "UT", "Vermont": "VT", "Virginia": "VA", "Washington": "WA",
+    "West Virginia": "WV", "Wisconsin": "WI", "Wyoming": "WY",
+}
+
+def add_state_abbreviations(df, state_col="State"):
+    # Attach state abbreviations and stop if any state name failed to map.
+    out = df.copy()
+    out["state_abbr"] = out[state_col].map(STATE_ABBR)
+    missing = out[out["state_abbr"].isna()][state_col].tolist()
+    if missing:
+        raise ValueError(f"Missing state abbreviations for: {missing}")
+    return out
+
+
+CELL 9 - Figure: US heatmap of selected topic salience
+
+# Choose one normalized salience column from sem_dataset_micro.csv.
+# Good thesis choices: border_security_salience, israel_palestine_salience, felon_conviction_salience, healthcare_medicare_salience.
+SALIENCE_COLUMN = "border_security_salience"
+MAP_TITLE = "State-level salience of border-security discourse"
+
+import plotly.express as px
+
+if SALIENCE_COLUMN not in micro_sem.columns:
+    raise ValueError(f"{SALIENCE_COLUMN} not found. Available salience columns: {[c for c in micro_sem.columns if c.endswith('_salience')]}")
+
+map_df = add_state_abbreviations(micro_sem)
+
+fig = px.choropleth(
+    map_df,
+    locations="state_abbr",
+    locationmode="USA-states",
+    scope="usa",
+    color=SALIENCE_COLUMN,
+    hover_name="State",
+    hover_data={SALIENCE_COLUMN: ":.3f", "state_abbr": False},
+    color_continuous_scale=["#f7fbff", "#c6dbef", "#6baed6", "#2171b5"],
+    range_color=(0, 1),
+)
+
+fig.update_layout(
+    title={"text": MAP_TITLE, "x": 0.5, "xanchor": "center", "font": {"size": 20, "family": "Times New Roman"}},
+    font={"family": "Times New Roman", "size": 14, "color": "black"},
+    margin={"l": 0, "r": 0, "t": 50, "b": 0},
+    coloraxis_colorbar={"title": "Normalized salience", "tickformat": ".2f"},
+    paper_bgcolor="white",
+    plot_bgcolor="white",
+)
+
+fig.update_geos(
+    lakecolor="white",
+    bgcolor="white",
+    showlakes=False,
+)
+
+salience_map_path = FIGURE_DIR / f"usa_map_{SALIENCE_COLUMN}.png"
+salience_map_html_path = FIGURE_DIR / f"usa_map_{SALIENCE_COLUMN}.html"
+fig.write_image(str(salience_map_path), width=1600, height=950, scale=2)
+fig.write_html(str(salience_map_html_path))
+fig.show()
+
+print("Saved:", salience_map_path)
+print("Saved interactive version:", salience_map_html_path)
+
+
+CELL 10 - Optional figures: raw and normalized sentiment heatmaps for one BERTopic topic
+
+# These optional maps use tweet-level sentiment and should be treated as diagnostic, not final SEM inputs.
+# The raw map shows the narrow observed sentiment range, while the normalized map stretches that same range to 0-1.
+TOPIC_ID_FOR_SENTIMENT = 5
+SENTIMENT_MAP_TITLE = "Mean sentiment of border-security tweets by state"
+
+if scored_tweets_path.exists():
+    # Load only the columns needed for the sentiment map to keep memory use lower.
+    scored_cols = ["state", "topic", "sentiment"]
+    scored = pd.read_parquet(scored_tweets_path, columns=scored_cols)
+    scored = scored.dropna(subset=["state", "topic", "sentiment"]).copy()
+    scored["topic"] = scored["topic"].astype(int)
+
+    # Compute mean sentiment for the selected topic and require a small minimum count per state.
+    topic_sent = scored[scored["topic"] == TOPIC_ID_FOR_SENTIMENT].groupby("state").agg(
+        mean_sentiment=("sentiment", "mean"),
+        topic_tweets=("sentiment", "size"),
+    ).reset_index().rename(columns={"state": "State"})
+    topic_sent = topic_sent[topic_sent["topic_tweets"] >= 25].copy()
+    topic_sent = add_state_abbreviations(topic_sent)
+    sent_min = topic_sent["mean_sentiment"].min()
+    sent_max = topic_sent["mean_sentiment"].max()
+    sent_range = sent_max - sent_min if sent_max != sent_min else 1
+    topic_sent["mean_sentiment_normalized"] = (topic_sent["mean_sentiment"] - sent_min) / sent_range
+
+    print("Raw sentiment range:")
+    print(topic_sent["mean_sentiment"].agg(["min", "max", "mean", "std"]))
+
+    raw_fig = px.choropleth(
+        topic_sent,
+        locations="state_abbr",
+        locationmode="USA-states",
+        scope="usa",
+        color="mean_sentiment",
+        hover_name="State",
+        hover_data={"mean_sentiment": ":.3f", "topic_tweets": ":,", "state_abbr": False},
+        color_continuous_scale=["#b2182b", "#f7f7f7", "#2166ac"],
+        range_color=(-1, 1),
+    )
+
+    raw_fig.update_layout(
+        title={"text": SENTIMENT_MAP_TITLE + " (raw scale)", "x": 0.5, "xanchor": "center", "font": {"size": 20, "family": "Times New Roman"}},
+        font={"family": "Times New Roman", "size": 14, "color": "black"},
+        margin={"l": 0, "r": 0, "t": 50, "b": 0},
+        coloraxis_colorbar={"title": "Mean sentiment", "tickformat": ".2f"},
+        paper_bgcolor="white",
+        plot_bgcolor="white",
+    )
+    raw_fig.update_geos(lakecolor="white", bgcolor="white", showlakes=False)
+
+    raw_sentiment_map_path = FIGURE_DIR / f"usa_map_topic_{TOPIC_ID_FOR_SENTIMENT}_mean_sentiment_raw.png"
+    raw_sentiment_map_html_path = FIGURE_DIR / f"usa_map_topic_{TOPIC_ID_FOR_SENTIMENT}_mean_sentiment_raw.html"
+    raw_fig.write_image(str(raw_sentiment_map_path), width=1600, height=950, scale=2)
+    raw_fig.write_html(str(raw_sentiment_map_html_path))
+    raw_fig.show()
+
+    norm_fig = px.choropleth(
+        topic_sent,
+        locations="state_abbr",
+        locationmode="USA-states",
+        scope="usa",
+        color="mean_sentiment_normalized",
+        hover_name="State",
+        hover_data={"mean_sentiment": ":.3f", "mean_sentiment_normalized": ":.3f", "topic_tweets": ":,", "state_abbr": False},
+        color_continuous_scale=["#fff7bc", "#fec44f", "#d95f0e"],
+        range_color=(0, 1),
+    )
+
+    norm_fig.update_layout(
+        title={"text": SENTIMENT_MAP_TITLE + " (normalized)", "x": 0.5, "xanchor": "center", "font": {"size": 20, "family": "Times New Roman"}},
+        font={"family": "Times New Roman", "size": 14, "color": "black"},
+        margin={"l": 0, "r": 0, "t": 50, "b": 0},
+        coloraxis_colorbar={"title": "Normalized mean sentiment", "tickformat": ".2f"},
+        paper_bgcolor="white",
+        plot_bgcolor="white",
+    )
+    norm_fig.update_geos(lakecolor="white", bgcolor="white", showlakes=False)
+
+    norm_sentiment_map_path = FIGURE_DIR / f"usa_map_topic_{TOPIC_ID_FOR_SENTIMENT}_mean_sentiment_normalized.png"
+    norm_sentiment_map_html_path = FIGURE_DIR / f"usa_map_topic_{TOPIC_ID_FOR_SENTIMENT}_mean_sentiment_normalized.html"
+    norm_fig.write_image(str(norm_sentiment_map_path), width=1600, height=950, scale=2)
+    norm_fig.write_html(str(norm_sentiment_map_html_path))
+    norm_fig.show()
+
+    print("Saved:", raw_sentiment_map_path)
+    print("Saved interactive version:", raw_sentiment_map_html_path)
+    print("Saved:", norm_sentiment_map_path)
+    print("Saved interactive version:", norm_sentiment_map_html_path)
+else:
+    print("Skipped sentiment map because scored tweet parquet was not found:", scored_tweets_path)

@@ -1,0 +1,406 @@
+---
+title: "US Election PLS-SEM - Micro-topic models"
+format: html
+editor: visual
+---
+
+## Load packages
+
+```{r}
+library(tidyverse)
+library(seminr)
+library(DiagrammeRsvg)
+library(rsvg)
+
+dir.create("micro_model_outputs", showWarnings = FALSE)
+
+save_plot <- function(model_object, filename, title_text = "") {
+  p <- plot(model_object, title = title_text)
+  svg_text <- DiagrammeRsvg::export_svg(p)
+  svg_text <- sub("(<svg[^>]*>)",
+                   "\\1\n<rect width=\"100%\" height=\"100%\" fill=\"white\"/>",
+                   svg_text)
+  rsvg::rsvg_png(charToRaw(svg_text),
+                  file.path("micro_model_outputs", paste0(filename, ".png")),
+                  width = 1400)
+}
+
+print_paths <- function(boot) {
+  paths <- as.data.frame(summary(boot)$bootstrapped_paths)
+  paths <- paths[!grepl("republican_pct", rownames(paths)), , drop = FALSE]
+  paths[, c("Original Est.", "T Stat.", "Bootstrap P Val")]
+}
+
+save_summary <- function(boot, est, filename) {
+  filepath <- file.path("micro_model_outputs", paste0(filename, ".txt"))
+  sink(filepath)
+  cat(filename, "\n")
+  cat(paste(rep("=", 60), collapse = ""), "\n\n")
+  print(summary(boot))
+  cat("\n\nModel summary (estimate):\n")
+  cat(paste(rep("-", 60), collapse = ""), "\n")
+  print(summary(est))
+  sink()
+}
+```
+
+## Load data
+
+```{r}
+df <- read.csv("sem_dataset_micro.csv")
+```
+
+------------------------------------------------------------------------
+
+# Measurement models
+
+```{r}
+# Salience only: new micro-topic salience indicators grouped into macro constructs.
+mm_salience <- constructs(
+  composite("DEMLAW", c("felon_conviction_salience",
+                         "project_2025_salience",
+                         "authoritarian_rhetoric_salience"), weights = mode_B),
+  composite("DOMPOL", c("healthcare_medicare_salience",
+                         "covid_vaccine_salience"), weights = mode_B),
+  composite("ECON", c("inflation_economy_salience",
+                       "crypto_markets_salience",
+                       "tax_policy_salience",
+                       "student_loans_salience",
+                       "labor_unions_salience"), weights = mode_B),
+  composite("FORPOL", c("israel_palestine_salience",
+                         "china_geopolitics_salience"), weights = mode_B),
+  composite("IMMIG", c("border_security_salience",
+                        "fentanyl_drugs_salience"), weights = mode_B),
+  composite("SOCISS", c("race_discourse_salience",
+                         "gender_abortion_salience",
+                         "climate_environment_salience"), weights = mode_B),
+  composite("VOTE", single_item("republican_pct"))
+)
+
+# Cleaned salience: keep the cleaner indicator set from the same new data.
+mm_clean <- constructs(
+  composite("DEMLAW", c("felon_conviction_salience",
+                         "project_2025_salience",
+                         "authoritarian_rhetoric_salience"), weights = mode_B),
+  composite("DOMPOL", single_item("healthcare_medicare_salience")),
+  composite("ECON",   single_item("inflation_economy_salience")),
+  composite("FORPOL", single_item("israel_palestine_salience")),
+  composite("IMMIG",  single_item("border_security_salience")),
+  composite("SOCISS", c("gender_abortion_salience",
+                         "climate_environment_salience"), weights = mode_B),
+  composite("VOTE", single_item("republican_pct"))
+)
+```
+
+------------------------------------------------------------------------
+
+# M1: Salience only, all 6 -\> VOTE
+
+```{r}
+sm_all6 <- relationships(
+  paths(from = c("DEMLAW", "DOMPOL", "ECON", "FORPOL", "IMMIG", "SOCISS"), to = "VOTE")
+)
+
+est_m1 <- estimate_pls(data = df, measurement_model = mm_salience, structural_model = sm_all6)
+set.seed(42)
+boot_m1 <- bootstrap_model(est_m1, nboot = 5000)
+print_paths(boot_m1)
+plot(boot_m1, title = "M1: Salience only, all 6 -> VOTE")
+save_plot(boot_m1, "M1_salience_all6", "M1: Salience only, all 6 -> VOTE")
+save_summary(boot_m1, est_m1, "M1_salience_all6")
+```
+
+------------------------------------------------------------------------
+
+# M2: Salience only, 5 topics (DOMPOL dropped)
+
+```{r}
+sm_5topics <- relationships(
+  paths(from = c("DEMLAW", "ECON", "FORPOL", "IMMIG", "SOCISS"), to = "VOTE")
+)
+
+est_m2 <- estimate_pls(data = df, measurement_model = mm_salience, structural_model = sm_5topics)
+set.seed(42)
+boot_m2 <- bootstrap_model(est_m2, nboot = 5000)
+print_paths(boot_m2)
+plot(boot_m2, title = "M2: Salience, 5 topics (no DOMPOL) -> VOTE")
+save_plot(boot_m2, "M2_salience_5topics", "M2: Salience, 5 topics (no DOMPOL) -> VOTE")
+save_summary(boot_m2, est_m2, "M2_salience_5topics")
+```
+
+------------------------------------------------------------------------
+
+# M3: Salience only, 4 topics (DOMPOL, ECON dropped)
+
+```{r}
+sm_4topics <- relationships(
+  paths(from = c("DEMLAW", "FORPOL", "IMMIG", "SOCISS"), to = "VOTE")
+)
+
+est_m3 <- estimate_pls(data = df, measurement_model = mm_salience, structural_model = sm_4topics)
+set.seed(42)
+boot_m3 <- bootstrap_model(est_m3, nboot = 5000)
+print_paths(boot_m3)
+plot(boot_m3, title = "M3: Salience, 4 topics -> VOTE")
+save_plot(boot_m3, "M3_salience_4topics", "M3: Salience, 4 topics -> VOTE")
+save_summary(boot_m3, est_m3, "M3_salience_4topics")
+```
+
+------------------------------------------------------------------------
+
+# M4: Salience only, core 3 (DEMLAW, FORPOL, IMMIG)
+
+```{r}
+sm_3topics <- relationships(
+  paths(from = c("DEMLAW", "FORPOL", "IMMIG"), to = "VOTE")
+)
+
+est_m4 <- estimate_pls(data = df, measurement_model = mm_salience, structural_model = sm_3topics)
+set.seed(42)
+boot_m4 <- bootstrap_model(est_m4, nboot = 5000)
+print_paths(boot_m4)
+plot(boot_m4, title = "M4: Salience, core 3 -> VOTE")
+save_plot(boot_m4, "M4_salience_core3", "M4: Salience, core 3 -> VOTE")
+save_summary(boot_m4, est_m4, "M4_salience_core3")
+```
+
+------------------------------------------------------------------------
+
+# M5: Cleaned salience, all 6 -\> VOTE
+
+```{r}
+est_m5 <- estimate_pls(data = df, measurement_model = mm_clean, structural_model = sm_all6)
+set.seed(42)
+boot_m5 <- bootstrap_model(est_m5, nboot = 5000)
+print_paths(boot_m5)
+plot(boot_m5, title = "M5: Cleaned salience, all 6 -> VOTE")
+save_plot(boot_m5, "M5_clean_all6", "M5: Cleaned salience, all 6 -> VOTE")
+save_summary(boot_m5, est_m5, "M5_clean_all6")
+```
+
+------------------------------------------------------------------------
+
+# M6: Cleaned salience, core 3 (DEMLAW, FORPOL, IMMIG)
+
+```{r}
+est_m6 <- estimate_pls(data = df, measurement_model = mm_clean, structural_model = sm_3topics)
+set.seed(42)
+boot_m6 <- bootstrap_model(est_m6, nboot = 5000)
+print_paths(boot_m6)
+plot(boot_m6, title = "M6: Cleaned salience, core 3 -> VOTE")
+save_plot(boot_m6, "M6_clean_core3", "M6: Cleaned salience, core 3 -> VOTE")
+save_summary(boot_m6, est_m6, "M6_clean_core3")
+```
+
+------------------------------------------------------------------------
+
+# M7: Three single-item micro-topics -\> VOTE
+
+Drops macro-topic composites entirely. Uses three individual micro-topic saliences directly: Israel/Palestine, border security, and felony conviction discourse.
+
+```{r}
+mm_micro3 <- constructs(
+  composite("ISRAEL", single_item("israel_palestine_salience")),
+  composite("IMMIG",  single_item("border_security_salience")),
+  composite("FELON",  single_item("felon_conviction_salience")),
+  composite("VOTE",   single_item("republican_pct"))
+)
+
+sm_micro3 <- relationships(
+  paths(from = c("ISRAEL", "IMMIG", "FELON"), to = "VOTE")
+)
+
+est_m7 <- estimate_pls(data = df, measurement_model = mm_micro3, structural_model = sm_micro3)
+set.seed(42)
+boot_m7 <- bootstrap_model(est_m7, nboot = 5000)
+print_paths(boot_m7)
+plot(boot_m7, title = "M7: Israel + Immigration + Felon -> VOTE")
+save_plot(boot_m7, "M7_micro3", "M7: Israel + Immigration + Felon -> VOTE")
+save_summary(boot_m7, est_m7, "M7_micro3")
+```
+
+------------------------------------------------------------------------
+
+# M8: POLICY + CONFLICT -\> VOTE (no mediation)
+
+POLICY = border security, inflation/economy, healthcare. CONFLICT = Israel/Palestine, felony conviction, gender/abortion.
+
+```{r}
+mm_polcon <- constructs(
+  composite("POLICY", c("border_security_salience",
+                         "inflation_economy_salience",
+                         "healthcare_medicare_salience"), weights = mode_B),
+  composite("CONFLICT", c("israel_palestine_salience",
+                           "felon_conviction_salience",
+                           "gender_abortion_salience"), weights = mode_B),
+  composite("VOTE", single_item("republican_pct"))
+)
+
+sm_polcon_direct <- relationships(
+  paths(from = c("POLICY", "CONFLICT"), to = "VOTE")
+)
+
+est_m8 <- estimate_pls(data = df, measurement_model = mm_polcon, structural_model = sm_polcon_direct)
+set.seed(42)
+boot_m8 <- bootstrap_model(est_m8, nboot = 5000)
+print_paths(boot_m8)
+summary(boot_m8)
+plot(boot_m8, title = "M8: POLICY + CONFLICT -> VOTE")
+save_plot(boot_m8, "M8_policy_conflict_direct", "M8: POLICY + CONFLICT -> VOTE")
+save_summary(boot_m8, est_m8, "M8_policy_conflict_direct")
+```
+
+------------------------------------------------------------------------
+
+# M9: POLICY -\> CONFLICT -\> VOTE (mediation)
+
+Same constructs. POLICY shapes CONFLICT discourse, both predict VOTE.
+
+```{r}
+sm_polcon_med <- relationships(
+  paths(from = "POLICY", to = "CONFLICT"),
+  paths(from = c("POLICY", "CONFLICT"), to = "VOTE")
+)
+
+est_m9 <- estimate_pls(data = df, measurement_model = mm_polcon, structural_model = sm_polcon_med)
+set.seed(42)
+boot_m9 <- bootstrap_model(est_m9, nboot = 5000)
+print_paths(boot_m9)
+summary(boot_m9)
+plot(boot_m9, title = "M9: POLICY -> CONFLICT -> VOTE")
+save_plot(boot_m9, "M9_policy_conflict_med", "M9: POLICY -> CONFLICT -> VOTE")
+save_summary(boot_m9, est_m9, "M9_policy_conflict_med")
+```
+
+------------------------------------------------------------------------
+
+# M10: POLICY + CONFLICT -\> VOTE (refined constructs)
+
+POLICY = border security and healthcare. CONFLICT = Israel/Palestine and felony conviction.
+
+```{r}
+mm_polcon2 <- constructs(
+  composite("POLICY", c("border_security_salience",
+                         "healthcare_medicare_salience"), weights = mode_B),
+  composite("CONFLICT", c("israel_palestine_salience",
+                           "felon_conviction_salience"), weights = mode_B),
+  composite("VOTE", single_item("republican_pct"))
+)
+
+sm_polcon2_direct <- relationships(
+  paths(from = c("POLICY", "CONFLICT"), to = "VOTE")
+)
+
+est_m10 <- estimate_pls(data = df, measurement_model = mm_polcon2, structural_model = sm_polcon2_direct)
+set.seed(42)
+boot_m10 <- bootstrap_model(est_m10, nboot = 5000)
+print_paths(boot_m10)
+summary(boot_m10)
+plot(boot_m10, title = "M10: POLICY + CONFLICT -> VOTE (refined)")
+save_plot(boot_m10, "M10_refined_direct", "M10: POLICY + CONFLICT -> VOTE (refined)")
+save_summary(boot_m10, est_m10, "M10_refined_direct")
+```
+
+------------------------------------------------------------------------
+
+# M10 model assessment diagnostics
+
+```{r}
+m10_summary <- summary(est_m10)
+
+get_vote_r2 <- function(est_summary) {
+  paths <- as.data.frame(est_summary$paths)
+  as.numeric(paths["R^2", "VOTE"])
+}
+
+r2_full <- get_vote_r2(m10_summary)
+
+sm_m10_no_policy <- relationships(
+  paths(from = "CONFLICT", to = "VOTE")
+)
+
+sm_m10_no_conflict <- relationships(
+  paths(from = "POLICY", to = "VOTE")
+)
+
+est_m10_no_policy <- estimate_pls(data = df, measurement_model = mm_polcon2, structural_model = sm_m10_no_policy)
+est_m10_no_conflict <- estimate_pls(data = df, measurement_model = mm_polcon2, structural_model = sm_m10_no_conflict)
+
+r2_no_policy <- get_vote_r2(summary(est_m10_no_policy))
+r2_no_conflict <- get_vote_r2(summary(est_m10_no_conflict))
+
+f2_policy <- (r2_full - r2_no_policy) / (1 - r2_full)
+f2_conflict <- (r2_full - r2_no_conflict) / (1 - r2_full)
+
+construct_scores <- as.data.frame(est_m10$construct_scores)
+structural_vif <- data.frame(
+  predictor = c("POLICY", "CONFLICT"),
+  vif = c(
+    1 / (1 - summary(lm(POLICY ~ CONFLICT, data = construct_scores))$r.squared),
+    1 / (1 - summary(lm(CONFLICT ~ POLICY, data = construct_scores))$r.squared)
+  )
+)
+
+effect_sizes <- data.frame(
+  predictor = c("POLICY", "CONFLICT"),
+  r2_included = c(r2_full, r2_full),
+  r2_excluded = c(r2_no_policy, r2_no_conflict),
+  f2 = c(f2_policy, f2_conflict)
+)
+
+prediction_check <- tryCatch({
+  pred <- predict_pls(
+    model = est_m10,
+    technique = predict_DA,
+    noFolds = 10,
+    reps = 10,
+    cores = NULL
+  )
+
+  actual <- pred$item_actuals[, "republican_pct"]
+  pls_pred <- pred$PLS_out_of_sample[, "republican_pct"]
+  lm_pred <- pred$lm_out_of_sample[, "republican_pct"]
+
+  data.frame(
+    model = c("PLS", "LM"),
+    rmse = c(
+      sqrt(mean((actual - pls_pred)^2, na.rm = TRUE)),
+      sqrt(mean((actual - lm_pred)^2, na.rm = TRUE))
+    ),
+    mae = c(
+      mean(abs(actual - pls_pred), na.rm = TRUE),
+      mean(abs(actual - lm_pred), na.rm = TRUE)
+    )
+  )
+}, error = function(e) {
+  data.frame(model = "PLSpredict failed", rmse = NA_real_, mae = NA_real_)
+})
+
+assessment_path <- file.path("micro_model_outputs", "M10_refined_assessment.txt")
+sink(assessment_path)
+cat("M10 refined model assessment diagnostics\n")
+cat(paste(rep("=", 60), collapse = ""), "\n\n")
+
+cat("Reliability and validity\n")
+print(m10_summary$reliability)
+cat("\nHTMT\n")
+print(m10_summary$validity$htmt)
+cat("\nIndicator VIF\n")
+print(m10_summary$validity$vif_items)
+
+cat("\nStructural collinearity VIF\n")
+print(structural_vif)
+
+cat("\nEffect sizes f2\n")
+print(effect_sizes)
+
+cat("\nPredictive check\n")
+print(prediction_check)
+sink()
+
+m10_summary$reliability
+m10_summary$validity$vif_items
+structural_vif
+effect_sizes
+prediction_check
+```

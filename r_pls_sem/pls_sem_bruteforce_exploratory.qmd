@@ -1,0 +1,397 @@
+---
+title: "US Election PLS-SEM - Exploratory brute-force models"
+format: html
+editor: visual
+---
+
+## Load packages
+
+```{r}
+library(tidyverse)
+library(seminr)
+library(DiagrammeRsvg)
+library(rsvg)
+
+dir.create("bruteforce_model_outputs", showWarnings = FALSE)
+
+save_plot <- function(model_object, filename, title_text = "") {
+  p <- plot(model_object, title = title_text)
+  svg_text <- DiagrammeRsvg::export_svg(p)
+  svg_text <- sub("(<svg[^>]*>)",
+                   "\\1\n<rect width=\"100%\" height=\"100%\" fill=\"white\"/>",
+                   svg_text)
+  rsvg::rsvg_png(charToRaw(svg_text),
+                  file.path("bruteforce_model_outputs", paste0(filename, ".png")),
+                  width = 1400)
+}
+
+save_summary <- function(boot, est, filename) {
+  filepath <- file.path("bruteforce_model_outputs", paste0(filename, ".txt"))
+  sink(filepath)
+  cat(filename, "\n")
+  cat(paste(rep("=", 60), collapse = ""), "\n\n")
+  print(summary(boot))
+  cat("\n\nModel summary (estimate):\n")
+  cat(paste(rep("-", 60), collapse = ""), "\n")
+  print(summary(est))
+  sink()
+}
+```
+
+## Load data
+
+```{r}
+df_macro <- read.csv("sem_dataset_macro.csv")
+df_micro <- read.csv("sem_dataset_micro.csv")
+```
+
+## Helper functions
+
+```{r}
+model_specs <- list()
+
+get_vote_r2 <- function(est_summary) {
+  if (!is.null(est_summary$paths)) {
+    paths <- as.data.frame(est_summary$paths)
+    if ("VOTE" %in% colnames(paths) && "R^2" %in% rownames(paths)) {
+      return(as.numeric(paths["R^2", "VOTE"]))
+    }
+  }
+  if (!is.null(est_summary$r_squared)) {
+    r2_table <- as.data.frame(est_summary$r_squared)
+    if ("VOTE" %in% rownames(r2_table)) {
+      return(as.numeric(r2_table["VOTE", 1]))
+    }
+  }
+  NA_real_
+}
+
+get_path_text <- function(est_summary) {
+  paths <- as.data.frame(est_summary$paths)
+  if (!"VOTE" %in% colnames(paths)) {
+    return(NA_character_)
+  }
+  path_rows <- setdiff(rownames(paths), c("R^2", "AdjR^2"))
+  paste(path_rows, round(paths[path_rows, "VOTE"], 3), collapse = "; ")
+}
+
+make_single_item_mm <- function(indicators) {
+  construct_objects <- lapply(names(indicators), function(construct_name) {
+    composite(construct_name, single_item(unname(indicators[[construct_name]])))
+  })
+  do.call(
+    constructs,
+    c(construct_objects, list(composite("VOTE", single_item("republican_pct"))))
+  )
+}
+
+make_grouped_mm <- function(groups) {
+  construct_objects <- lapply(names(groups), function(construct_name) {
+    cols <- unname(groups[[construct_name]])
+    if (length(cols) == 1) {
+      composite(construct_name, single_item(cols))
+    } else {
+      composite(construct_name, cols, weights = mode_B)
+    }
+  })
+  do.call(
+    constructs,
+    c(construct_objects, list(composite("VOTE", single_item("republican_pct"))))
+  )
+}
+
+screen_direct_model <- function(data, measurement_model, structural_model,
+                                model_id, family, label, n_predictors) {
+  tryCatch({
+    est <- estimate_pls(
+      data = data,
+      measurement_model = measurement_model,
+      structural_model = structural_model
+    )
+    est_summary <- summary(est)
+    r2 <- get_vote_r2(est_summary)
+    adj_r2 <- 1 - (1 - r2) * ((nrow(data) - 1) / (nrow(data) - n_predictors - 1))
+
+    model_specs[[model_id]] <<- list(
+      data = data,
+      measurement_model = measurement_model,
+      structural_model = structural_model,
+      label = label
+    )
+
+    tibble(
+      model_id = model_id,
+      family = family,
+      label = label,
+      n_predictors = n_predictors,
+      r2 = r2,
+      adj_r2 = adj_r2,
+      paths = get_path_text(est_summary),
+      error = NA_character_
+    )
+  }, error = function(e) {
+    tibble(
+      model_id = model_id,
+      family = family,
+      label = label,
+      n_predictors = n_predictors,
+      r2 = NA_real_,
+      adj_r2 = NA_real_,
+      paths = NA_character_,
+      error = e$message
+    )
+  })
+}
+```
+
+## Macro subset screen
+
+```{r}
+macro_topics <- c(
+  DEMLAW = "Governance_Democracy_salience",
+  DOMPOL = "Public_Health_salience",
+  ECON = "Economy_salience",
+  FORPOL = "Foreign_Policy_salience",
+  IMMIG = "Immigration_salience",
+  SOCISS = "Social_Issues_salience"
+)
+
+macro_results <- list()
+counter <- 1
+
+for (k in 2:length(macro_topics)) {
+  topic_combos <- combn(names(macro_topics), k, simplify = FALSE)
+
+  for (combo_names in topic_combos) {
+    indicators <- macro_topics[combo_names]
+    mm <- make_single_item_mm(indicators)
+    sm <- relationships(paths(from = names(indicators), to = "VOTE"))
+
+    model_id <- paste0("macro_subset_", counter)
+    label <- paste(combo_names, collapse = " + ")
+
+    macro_results[[counter]] <- screen_direct_model(
+      data = df_macro,
+      measurement_model = mm,
+      structural_model = sm,
+      model_id = model_id,
+      family = "macro_subsets",
+      label = label,
+      n_predictors = length(indicators)
+    )
+
+    counter <- counter + 1
+  }
+}
+
+macro_screen <- bind_rows(macro_results) %>%
+  arrange(desc(adj_r2))
+
+write.csv(macro_screen,
+          file.path("bruteforce_model_outputs", "macro_subset_screen.csv"),
+          row.names = FALSE)
+
+macro_screen
+```
+
+## Micro direct subset screen
+
+```{r}
+micro_topics <- c(
+  ISRAEL = "israel_palestine_salience",
+  CHINA = "china_geopolitics_salience",
+  BORDER = "border_security_salience",
+  FENTANYL = "fentanyl_drugs_salience",
+  INFLATION = "inflation_economy_salience",
+  HEALTHCARE = "healthcare_medicare_salience",
+  TAX = "tax_policy_salience",
+  FELON = "felon_conviction_salience",
+  PROJECT2025 = "project_2025_salience",
+  AUTHORITARIAN = "authoritarian_rhetoric_salience",
+  GENDER = "gender_abortion_salience",
+  RACE = "race_discourse_salience"
+)
+
+micro_results <- list()
+counter <- 1
+
+for (k in 2:6) {
+  topic_combos <- combn(names(micro_topics), k, simplify = FALSE)
+
+  for (combo_names in topic_combos) {
+    indicators <- micro_topics[combo_names]
+    mm <- make_single_item_mm(indicators)
+    sm <- relationships(paths(from = names(indicators), to = "VOTE"))
+
+    model_id <- paste0("micro_direct_", counter)
+    label <- paste(combo_names, collapse = " + ")
+
+    micro_results[[counter]] <- screen_direct_model(
+      data = df_micro,
+      measurement_model = mm,
+      structural_model = sm,
+      model_id = model_id,
+      family = "micro_direct_subsets",
+      label = label,
+      n_predictors = length(indicators)
+    )
+
+    counter <- counter + 1
+  }
+}
+
+micro_direct_screen <- bind_rows(micro_results) %>%
+  arrange(desc(adj_r2))
+
+write.csv(micro_direct_screen,
+          file.path("bruteforce_model_outputs", "micro_direct_subset_screen.csv"),
+          row.names = FALSE)
+
+micro_direct_screen
+```
+
+## Logical construct screen
+
+```{r}
+logical_construct_sets <- list(
+  macro_policy_conflict = list(
+    data = df_macro,
+    groups = list(
+      POLICY = c("Economy_salience", "Immigration_salience", "Public_Health_salience"),
+      CONFLICT = c("Foreign_Policy_salience", "Governance_Democracy_salience", "Social_Issues_salience")
+    )
+  ),
+  macro_material_symbolic = list(
+    data = df_macro,
+    groups = list(
+      MATERIAL = c("Economy_salience", "Immigration_salience", "Public_Health_salience"),
+      SYMBOLIC = c("Foreign_Policy_salience", "Governance_Democracy_salience", "Social_Issues_salience")
+    )
+  ),
+  micro_policy_conflict_broad = list(
+    data = df_micro,
+    groups = list(
+      POLICY = c("border_security_salience", "inflation_economy_salience", "healthcare_medicare_salience"),
+      CONFLICT = c("israel_palestine_salience", "felon_conviction_salience", "gender_abortion_salience")
+    )
+  ),
+  micro_policy_conflict_refined = list(
+    data = df_micro,
+    groups = list(
+      POLICY = c("border_security_salience", "healthcare_medicare_salience"),
+      CONFLICT = c("israel_palestine_salience", "felon_conviction_salience")
+    )
+  ),
+  micro_democracy_conflict = list(
+    data = df_micro,
+    groups = list(
+      DEMOCRACY = c("felon_conviction_salience", "project_2025_salience", "authoritarian_rhetoric_salience"),
+      CONFLICT = c("israel_palestine_salience", "gender_abortion_salience", "race_discourse_salience")
+    )
+  ),
+  micro_security_conflict = list(
+    data = df_micro,
+    groups = list(
+      SECURITY = c("border_security_salience", "fentanyl_drugs_salience"),
+      CONFLICT = c("israel_palestine_salience", "felon_conviction_salience", "authoritarian_rhetoric_salience")
+    )
+  ),
+  micro_economic_security = list(
+    data = df_micro,
+    groups = list(
+      ECONOMIC = c("inflation_economy_salience", "tax_policy_salience", "healthcare_medicare_salience"),
+      SECURITY = c("border_security_salience", "fentanyl_drugs_salience", "china_geopolitics_salience")
+    )
+  )
+)
+
+logical_results <- list()
+counter <- 1
+
+for (set_name in names(logical_construct_sets)) {
+  spec <- logical_construct_sets[[set_name]]
+  mm <- make_grouped_mm(spec$groups)
+  sm <- relationships(paths(from = names(spec$groups), to = "VOTE"))
+
+  model_id <- paste0("logical_", counter)
+  label <- set_name
+
+  logical_results[[counter]] <- screen_direct_model(
+    data = spec$data,
+    measurement_model = mm,
+    structural_model = sm,
+    model_id = model_id,
+    family = "logical_constructs",
+    label = label,
+    n_predictors = length(spec$groups)
+  )
+
+  counter <- counter + 1
+}
+
+logical_screen <- bind_rows(logical_results) %>%
+  arrange(desc(adj_r2))
+
+write.csv(logical_screen,
+          file.path("bruteforce_model_outputs", "logical_construct_screen.csv"),
+          row.names = FALSE)
+
+logical_screen
+```
+
+## Combine screens
+
+```{r}
+all_screen <- bind_rows(macro_screen, micro_direct_screen, logical_screen) %>%
+  filter(is.na(error)) %>%
+  arrange(desc(adj_r2))
+
+write.csv(all_screen,
+          file.path("bruteforce_model_outputs", "all_model_screen.csv"),
+          row.names = FALSE)
+
+all_screen %>% slice_head(n = 30)
+```
+
+## Bootstrap strongest candidates
+
+```{r}
+top_models <- all_screen %>%
+  slice_head(n = 25)
+
+boot_results <- list()
+
+for (i in seq_len(nrow(top_models))) {
+  model_id <- top_models$model_id[i]
+  spec <- model_specs[[model_id]]
+
+  est <- estimate_pls(
+    data = spec$data,
+    measurement_model = spec$measurement_model,
+    structural_model = spec$structural_model
+  )
+
+  set.seed(42)
+  boot <- bootstrap_model(est, nboot = 5000)
+
+  filename <- paste0("BOOT_", sprintf("%02d", i), "_", model_id)
+  save_plot(boot, filename, spec$label)
+  save_summary(boot, est, filename)
+
+  boot_paths <- as.data.frame(summary(boot)$bootstrapped_paths)
+  boot_paths$model_id <- model_id
+  boot_paths$label <- spec$label
+  boot_paths$path <- rownames(boot_paths)
+  rownames(boot_paths) <- NULL
+
+  boot_results[[i]] <- boot_paths
+}
+
+boot_path_results <- bind_rows(boot_results)
+
+write.csv(boot_path_results,
+          file.path("bruteforce_model_outputs", "top_bootstrapped_paths.csv"),
+          row.names = FALSE)
+
+boot_path_results
+```

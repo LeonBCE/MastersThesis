@@ -1,0 +1,239 @@
+﻿============================================================
+03_sentiment.ipynb
+============================================================
+
+CELL 1 - Install packages
+
+# Install packages needed for sentiment scoring.
+!pip -q install pandas pyarrow tqdm transformers torch huggingface_hub
+
+
+CELL 2 - Log in to Hugging Face
+
+# Log in to Hugging Face using the token stored in Colab Secrets.
+from google.colab import userdata
+from huggingface_hub import login
+
+login(token=userdata.get("HF_TOKEN"))
+
+
+CELL 3 - Mount Drive and load topic-assigned tweets
+
+# Mount Google Drive and load tweets with assigned topics.
+from google.colab import drive
+drive.mount("/content/drive")
+
+from pathlib import Path
+import pandas as pd
+
+PROJECT_DIR = Path("/content/drive/MyDrive/Thesis_Clean_Pipeline")
+DATA_DIR = PROJECT_DIR / "data"
+INTERIM_DIR = DATA_DIR / "interim"
+OUTPUT_DIR = DATA_DIR / "outputs"
+
+for folder in [INTERIM_DIR, OUTPUT_DIR]:
+    folder.mkdir(parents=True, exist_ok=True)
+
+tweets_path = INTERIM_DIR / "tweets_with_topics.parquet"
+# Load the topic-assigned tweet table produced by notebook 02.
+df = pd.read_parquet(tweets_path)
+
+print(f"Loaded topic-assigned tweets: {len(df):,}")
+display(df.head())
+
+
+CELL 4 - Run sentiment analysis
+
+# Score sentiment with a Twitter-RoBERTa model in GPU batches.
+import gc
+import numpy as np
+import torch
+import torch.nn.functional as F
+from tqdm.auto import tqdm
+from transformers import AutoModelForSequenceClassification, AutoTokenizer
+
+SENT_MODEL = "cardiffnlp/twitter-roberta-base-sentiment-latest"
+# Use GPU for transformer inference when Colab provides one.
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+# Load the Twitter-specific sentiment tokenizer and classifier.
+tokenizer = AutoTokenizer.from_pretrained(SENT_MODEL)
+model = AutoModelForSequenceClassification.from_pretrained(
+    SENT_MODEL,
+    dtype=torch.float16 if device.type == "cuda" else torch.float32
+).to(device).eval()
+
+def clear_cuda():
+    # Release cached CUDA memory after failed or completed inference batches.
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+def score_sentiment_batch(batch_texts, current_batch_size):
+    # Score one sentiment batch and return continuous sentiment plus class probabilities.
+    enc = tokenizer(
+        batch_texts,
+        return_tensors="pt",
+        truncation=True,
+        max_length=128,
+        padding=True,
+        pad_to_multiple_of=8
+    ).to(device)
+    with torch.inference_mode(), torch.autocast(device_type="cuda", dtype=torch.float16, enabled=(device.type == "cuda")):
+        out = model(**enc)
+    probs = F.softmax(out.logits.float(), dim=1).cpu().numpy()
+    del enc, out
+    return -probs[:, 0] + probs[:, 2], probs[:, 0], probs[:, 1], probs[:, 2]
+
+# Score sentiment on raw tweet text, not cleaned_text, so emotional cues are preserved.
+texts = df["rawContent"].fillna("").astype(str).tolist()
+# Preallocate arrays so batch results can be written by row position.
+sentiment = np.full(len(df), np.nan)
+sent_neg = np.full(len(df), np.nan)
+sent_neu = np.full(len(df), np.nan)
+sent_pos = np.full(len(df), np.nan)
+
+# Start large on A100 and automatically halve if a CUDA OOM occurs.
+batch_size = 16_384
+min_batch_size = 1_024
+
+start = 0
+with tqdm(total=len(texts), desc="Sentiment scoring") as pbar:
+  while start < len(texts):
+    current_batch_size = min(batch_size, len(texts) - start)
+    end = start + current_batch_size
+    batch = texts[start:end]
+    try:
+        batch_sentiment, batch_neg, batch_neu, batch_pos = score_sentiment_batch(batch, current_batch_size)
+        sentiment[start:end] = batch_sentiment
+        sent_neg[start:end] = batch_neg
+        sent_neu[start:end] = batch_neu
+        sent_pos[start:end] = batch_pos
+        del batch_sentiment, batch_neg, batch_neu, batch_pos
+        start = end
+        pbar.update(current_batch_size)
+    except RuntimeError as e:
+        if "out of memory" not in str(e).lower() or batch_size <= min_batch_size:
+            clear_cuda()
+            raise
+        batch_size = max(min_batch_size, batch_size // 2)
+        print(f"CUDA OOM in sentiment; retrying with batch_size={batch_size:,}")
+        clear_cuda()
+
+# Attach the continuous score and class probabilities to the tweet table.
+df["sentiment"] = sentiment
+df["sent_neg"] = sent_neg
+df["sent_neu"] = sent_neu
+df["sent_pos"] = sent_pos
+
+# Save the scored corpus for state-level aggregation.
+score_path = INTERIM_DIR / "tweets_with_topics_scores.parquet"
+df.to_parquet(score_path, index=False)
+
+print("Saved:", score_path)
+display(df[["state", "topic", "sentiment", "rawContent"]].head())
+
+
+CELL 5 - Run stance analysis
+
+# Score stance with an NLI model, but keep it as a diagnostic variable because validation failed.
+import gc
+import numpy as np
+import torch
+import torch.nn.functional as F
+from tqdm.auto import tqdm
+from transformers import AutoModelForSequenceClassification, AutoTokenizer
+
+STANCE_MODEL = "MoritzLaurer/DeBERTa-v3-base-mnli-fever-anli"
+# Reuse GPU inference for the diagnostic stance sample when available.
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+# Load the NLI model used for conservative/progressive diagnostic scoring.
+stance_tokenizer = AutoTokenizer.from_pretrained(STANCE_MODEL)
+stance_model = AutoModelForSequenceClassification.from_pretrained(
+    STANCE_MODEL,
+    dtype=torch.float16 if device.type == "cuda" else torch.float32
+).to(device).eval()
+
+def score_stance_batch(batch_texts):
+    # Score conservative and progressive NLI hypotheses for one batch.
+    cons_enc = stance_tokenizer(
+        batch_texts, [cons_hyp] * len(batch_texts),
+        return_tensors="pt",
+        truncation=True,
+        max_length=128,
+        padding=True,
+        pad_to_multiple_of=8
+    ).to(device)
+    prog_enc = stance_tokenizer(
+        batch_texts, [prog_hyp] * len(batch_texts),
+        return_tensors="pt",
+        truncation=True,
+        max_length=128,
+        padding=True,
+        pad_to_multiple_of=8
+    ).to(device)
+    with torch.inference_mode(), torch.autocast(device_type="cuda", dtype=torch.float16, enabled=(device.type == "cuda")):
+        cons_out = stance_model(**cons_enc)
+        prog_out = stance_model(**prog_enc)
+    cons_scores = F.softmax(cons_out.logits.float(), dim=1).cpu().numpy()[:, 2]
+    prog_scores = F.softmax(prog_out.logits.float(), dim=1).cpu().numpy()[:, 2]
+    del cons_enc, prog_enc, cons_out, prog_out
+    return cons_scores, prog_scores
+
+# NLI hypotheses define the two political-direction scores to compare.
+cons_hyp = "This text expresses conservative right-wing political views."
+prog_hyp = "This text expresses progressive left-wing political views."
+
+# Score only a reproducible sample because stance validation failed for final modelling.
+STANCE_SAMPLE_SIZE = 500_000
+stance_sample_size = min(STANCE_SAMPLE_SIZE, len(df))
+df_stance = df.sample(n=stance_sample_size, random_state=42).reset_index(drop=True)
+stance_texts = df_stance["rawContent"].fillna("").astype(str).tolist()
+
+# Preallocate diagnostic stance outputs for the sampled tweets.
+stance = np.full(len(df_stance), np.nan)
+stance_conservative = np.full(len(df_stance), np.nan)
+stance_progressive = np.full(len(df_stance), np.nan)
+
+# NLI uses paired text/hypothesis inputs, so start below sentiment but still push A100.
+batch_size = 4_096
+min_batch_size = 512
+
+start = 0
+with tqdm(total=len(stance_texts), desc="Stance scoring") as pbar:
+  while start < len(stance_texts):
+    current_batch_size = min(batch_size, len(stance_texts) - start)
+    end = start + current_batch_size
+    batch = stance_texts[start:end]
+    try:
+        cons_scores, prog_scores = score_stance_batch(batch)
+        stance[start:end] = cons_scores - prog_scores
+        stance_conservative[start:end] = cons_scores
+        stance_progressive[start:end] = prog_scores
+        del cons_scores, prog_scores
+        start = end
+        pbar.update(current_batch_size)
+    except RuntimeError as e:
+        if "out of memory" not in str(e).lower() or batch_size <= min_batch_size:
+            clear_cuda()
+            raise
+        batch_size = max(min_batch_size, batch_size // 2)
+        print(f"CUDA OOM in stance; retrying with batch_size={batch_size:,}")
+        clear_cuda()
+
+# Save stance as diagnostic metadata only, not as a final SEM predictor.
+df_stance["stance"] = stance
+df_stance["stance_conservative"] = stance_conservative
+df_stance["stance_progressive"] = stance_progressive
+
+print("Stance was computed on a diagnostic sample only, because validation showed it was not reliable enough for modelling.")
+print("Keep this output for inspection only, not as a final SEM predictor.")
+
+# Keep the stance sample for validation and thesis transparency.
+stance_path = INTERIM_DIR / "stance_diagnostic_sample.parquet"
+df_stance.to_parquet(stance_path, index=False)
+
+print("Saved:", stance_path)
+display(df_stance[["state", "topic", "stance", "rawContent"]].head())
+

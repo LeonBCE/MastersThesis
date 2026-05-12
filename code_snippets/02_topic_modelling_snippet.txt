@@ -1,0 +1,439 @@
+﻿============================================================
+02_topic_modelling.ipynb
+============================================================
+
+CELL 1 - Install packages
+
+# Install packages needed for BERTopic training and full-corpus topic assignment.
+!pip -q install pandas pyarrow tqdm scikit-learn sentence-transformers bertopic hdbscan umap-learn huggingface_hub
+
+
+CELL 2 - Log in to Hugging Face
+
+# Log in to Hugging Face using the token stored in Colab Secrets.
+from google.colab import userdata
+from huggingface_hub import login
+
+login(token=userdata.get("HF_TOKEN"))
+
+
+CELL 3 - Mount Drive and load paths
+
+# Mount Google Drive and load the cleaned tweet table.
+from google.colab import drive
+drive.mount("/content/drive")
+
+from pathlib import Path
+import pandas as pd
+
+PROJECT_DIR = Path("/content/drive/MyDrive/Thesis_Clean_Pipeline")
+DATA_DIR = PROJECT_DIR / "data"
+INTERIM_DIR = DATA_DIR / "interim"
+OUTPUT_DIR = DATA_DIR / "outputs"
+MODEL_DIR = PROJECT_DIR / "models"
+
+for folder in [INTERIM_DIR, OUTPUT_DIR, MODEL_DIR]:
+    folder.mkdir(parents=True, exist_ok=True)
+
+clean_path = INTERIM_DIR / "english_state_cleaned.parquet"
+df_clean = pd.read_parquet(clean_path)
+
+print(f"Loaded cleaned tweets: {len(df_clean):,}")
+display(df_clean.head())
+
+
+CELL 3b - Strip additional candidate names from cleaned_text
+
+# Remove candidate names not caught by notebook 01's filter.
+# Prevents name-based topic clusters (e.g. Nikki Haley, Jill Stein) without
+# rerunning notebook 01. Affects both training sample and full topic assignment.
+EXTRA_REMOVE = {"nikki", "haley", "jill", "stein", "vivek",
+                "ramaswamy", "pelosi", "tulsi", "gabbard", "melania",
+                "desantis",
+                "cheney", "czar", "kama"}
+
+# Apply the extra name filter to the already-cleaned text without rerunning notebook 01.
+df_clean["cleaned_text"] = df_clean["cleaned_text"].str.split().apply(
+    lambda words: " ".join(w for w in words if w not in EXTRA_REMOVE)
+)
+df_clean["word_count"] = df_clean["cleaned_text"].str.split().str.len()
+df_clean = df_clean[df_clean["word_count"] >= 3].copy()
+df_clean.to_parquet(clean_path, index=False)
+
+print(f"Cleaned tweets after name filter: {len(df_clean):,}")
+
+
+CELL 4 - Create larger BERTopic training sample
+
+# Create a reproducible sample for topic model training.
+TOPIC_SAMPLE_SIZE = 1_000_000
+sample_size = min(TOPIC_SAMPLE_SIZE, len(df_clean))
+
+# Draw a reproducible training sample so BERTopic results can be compared across runs.
+df_topic_sample = df_clean.sample(n=sample_size, random_state=42).reset_index(drop=True)
+sample_path = INTERIM_DIR / "topic_training_sample.parquet"
+df_topic_sample.to_parquet(sample_path, index=False)
+
+print(f"Topic sample rows: {len(df_topic_sample):,}")
+print("Saved:", sample_path)
+display(df_topic_sample.head())
+
+
+CELL 5 - Train BERTopic model
+
+# Train BERTopic on the larger sample.
+import gc
+import numpy as np
+import torch
+from bertopic import BERTopic
+from bertopic.representation import KeyBERTInspired
+from sentence_transformers import SentenceTransformer
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.feature_extraction import text
+from hdbscan import HDBSCAN
+from umap import UMAP
+
+RANDOM_STATE = 42
+EMBED_BATCH_SIZE = 4096
+MIN_EMBED_BATCH_SIZE = 512
+
+def clear_cuda():
+    # Release cached CUDA blocks after deleting Python references to tensors/models.
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        try:
+            torch.cuda.ipc_collect()
+        except Exception:
+            pass
+
+def print_gpu(label):
+    # Print free, allocated, and reserved memory to diagnose Colab GPU pressure.
+    if torch.cuda.is_available():
+        free, total = torch.cuda.mem_get_info()
+        allocated = torch.cuda.memory_allocated()
+        reserved = torch.cuda.memory_reserved()
+        print(
+            f"{label}: free={free / 1e9:.1f} GB, "
+            f"allocated={allocated / 1e9:.1f} GB, reserved={reserved / 1e9:.1f} GB, "
+            f"total={total / 1e9:.1f} GB"
+        )
+
+def delete_if_exists(names):
+    # Remove large globals left over from interrupted Colab cell executions.
+    for name in names:
+        if name in globals():
+            del globals()[name]
+    clear_cuda()
+
+def encode_docs_with_backoff(model, documents, start_batch_size=4096, min_batch_size=512):
+    # Try the fastest embedding batch first, then halve it automatically on CUDA OOM.
+    batch_size = start_batch_size
+    last_error = None
+    while batch_size >= min_batch_size:
+        clear_cuda()
+        print(f"Encoding {len(documents):,} docs with batch_size={batch_size:,}")
+        try:
+            with torch.inference_mode():
+                encoded = model.encode(
+                    documents,
+                    batch_size=batch_size,
+                    show_progress_bar=True,
+                    normalize_embeddings=True,
+                    convert_to_numpy=True
+                )
+            return np.asarray(encoded, dtype=np.float32)
+        except RuntimeError as e:
+            last_error = e
+            if "out of memory" not in str(e).lower():
+                raise
+            print(f"CUDA OOM at batch_size={batch_size:,}; retrying with {batch_size // 2:,}")
+            clear_cuda()
+            batch_size //= 2
+    raise RuntimeError(f"Could not encode without CUDA OOM. Last error: {last_error}")
+
+# Force-clear GPU state from any previous run before loading anything new.
+# This matters in Colab because a failed cell can leave large objects alive.
+delete_if_exists([
+    "embedding_model", "topic_model", "hdbscan_model", "umap_model",
+    "embeddings", "docs", "topics", "probs",
+    "topic_embeddings", "topic_embeddings_for_assignment",
+    "assigned_topics", "texts"
+])
+if torch.cuda.is_available():
+    torch.cuda.reset_peak_memory_stats()
+    print_gpu("GPU before loading")
+
+REMOVE_WORDS = {
+    "amp", "rt", "retweet", "repost", "reposted", "follow", "following", "breaking",
+    "official", "thread", "link", "click", "watch", "video", "photo",
+    "trump", "donald", "biden", "joe", "kamala", "harris", "maga", "potus",
+    "vance", "walz", "obama", "clinton", "hillary", "rfk", "kennedy",
+}
+
+TOPIC_LABEL_STOP_WORDS = {
+    "republican", "republicans", "gop",
+    "democrat", "democrats", "dem",
+    "conservative", "conservatives", "liberal", "liberals",
+    "candidate", "candidates", "election", "elections",
+    "voter", "voters", "vote", "votes", "voted", "voting", "voteblue",
+    "ballot", "ballots", "poll", "polls", "polling",
+    "nominee", "nominees", "campaign", "campaigns",
+    "debate", "speech", "headline", "conference", "convention", "event",
+    "president", "presidential", "pres", "presidency",
+    "governor", "gov", "rnc", "dnc", "party", "parties",
+    "fox", "foxnews", "msnbc", "cnn", "nbc", "media", "news",
+    "twitter", "tweet", "tweets", "account", "accounts",
+    "follow", "followed", "followers", "posts",
+    "good", "morning", "hello", "hey", "welcome", "thank", "thanks", "glad", "appreciate",
+    "elon", "musk", "florida", "texas", "california", "michigan", "pennsylvania",
+}
+
+docs = df_topic_sample["cleaned_text"].tolist()
+
+# Load the sentence-transformer on GPU when available for fast tweet embeddings.
+device = "cuda" if torch.cuda.is_available() else "cpu"
+embedding_model = SentenceTransformer("all-mpnet-base-v2", device=device)
+embedding_model.max_seq_length = 128  # tweets are short; caps padding and prevents OOM on long-tail batches
+if device == "cuda":
+    # Use half precision on A100 to reduce memory while preserving embedding quality.
+    embedding_model = embedding_model.half()
+    print_gpu("GPU after loading embedding model")
+
+# Encode the sampled tweets once so BERTopic does not need to hold the encoder during fit.
+embeddings = encode_docs_with_backoff(
+    embedding_model,
+    docs,
+    start_batch_size=EMBED_BATCH_SIZE,
+    min_batch_size=MIN_EMBED_BATCH_SIZE
+)
+
+# BERTopic's UMAP/HDBSCAN path below is CPU-based. Move the encoder off GPU
+# before clustering so failed/slow clustering does not pin A100 memory.
+embedding_model = embedding_model.to("cpu")
+clear_cuda()
+print_gpu("GPU after encoding")
+
+seed_topic_list = [
+    # Economy 1 - cost of living
+    ["inflation", "prices", "grocery", "gas", "cost", "affordability", "recession"],
+    # Economy 2 - fiscal policy
+    ["tax", "tariff", "debt", "deficit", "spending", "budget", "fiscal"],
+    # Immigration 1 - border
+    ["border", "wall", "open border", "border patrol", "southern border"],
+    # Immigration 2 - migration
+    ["immigration", "immigrant", "migrant", "deportation", "asylum", "fentanyl"],
+    # Ukraine / Russia (specific geography, no generic war terms shared with Israel)
+    ["ukraine", "russia", "putin", "nato", "kremlin", "zelensky", "kyiv"],
+    # Israel / Gaza (specific Middle East terms, no overlap with Ukraine seed)
+    ["israel", "gaza", "hamas", "netanyahu", "idf", "west bank", "october 7"],
+    # Abortion
+    ["abortion", "roe", "wade", "reproductive", "prolife", "prochoice"],
+    # Race / DEI / Woke
+    ["race", "racism", "racist", "dei", "woke", "diversity", "white"],
+    # Guns
+    ["gun", "guns", "second amendment", "shooting", "firearm", "nra"],
+    # Climate
+    ["climate", "climate change", "renewable", "emissions", "environment"],
+    # Democracy / Courts / Institutions
+    ["democracy", "constitution", "insurrection", "january", "capitol",
+     "coup", "supreme court", "immunity", "dictator"],
+    # Felon / Legal cases
+    ["indictment", "trial", "convicted", "felony", "conviction", "felon",
+     "verdict", "criminal", "doj", "guilty"],
+    # Healthcare
+    ["healthcare", "insurance", "medicare", "medicaid", "hospital", "prescription"],
+    # Covid
+    ["covid", "vaccine", "pandemic", "virus", "masks"],
+    # Project 2025
+    ["project 2025", "heritage foundation", "agenda", "manifesto", "authoritarian"],
+]
+
+stop_words = list(text.ENGLISH_STOP_WORDS.union(REMOVE_WORDS).union(EXTRA_REMOVE).union(TOPIC_LABEL_STOP_WORDS))
+# Use n-grams so topic labels can surface phrases like "project 2025" or "open border".
+vectorizer_model = TfidfVectorizer(stop_words=stop_words, ngram_range=(1, 3), min_df=20)
+# Improve topic labels with semantically relevant representative words.
+representation_model = KeyBERTInspired()
+# Seed UMAP for reproducible dimensionality reduction before HDBSCAN clustering.
+umap_model = UMAP(
+    n_neighbors=15,
+    n_components=5,
+    min_dist=0.0,
+    metric="cosine",
+    low_memory=True,
+    random_state=RANDOM_STATE
+)
+# HDBSCAN forms dense topic clusters and keeps prediction data for BERTopic internals.
+hdbscan_model = HDBSCAN(min_cluster_size=500, min_samples=100, prediction_data=True)
+
+# Assemble BERTopic with precomputed embeddings, guided seeds, and bounded topic reduction.
+topic_model = BERTopic(
+    embedding_model=embedding_model,
+    vectorizer_model=vectorizer_model,
+    representation_model=representation_model,
+    umap_model=umap_model,
+    hdbscan_model=hdbscan_model,
+    seed_topic_list=seed_topic_list,
+    nr_topics=60,
+    min_topic_size=500,
+    verbose=True
+)
+
+# Precomputed embeddings are still passed directly, but BERTopic also receives
+# embedding_model so KeyBERTInspired can fine-tune topic words at the end.
+try:
+    # Fit BERTopic on the sample using precomputed embeddings rather than raw text encoding.
+    topics, probs = topic_model.fit_transform(docs, embeddings=embeddings)
+except Exception:
+    clear_cuda()
+    raise
+
+# Inspect the largest learned topics before committing to downstream mappings.
+topic_info = topic_model.get_topic_info()
+display(topic_info.head(80))
+
+# Save c-TF-IDF and the embedding model so the trained BERTopic model can be reloaded.
+topic_model_path = MODEL_DIR / "bertopic_election_clean"
+topic_model.save(str(topic_model_path), serialization="safetensors", save_ctfidf=True, save_embedding_model=embedding_model)
+
+delete_if_exists(["embeddings", "docs", "topics", "probs"])
+print_gpu("GPU after training")
+
+print("Saved model:", topic_model_path)
+
+
+CELL 6 - Assign topics to all cleaned tweets
+
+# Assign the trained BERTopic model to tweets in chunks.
+# For testing use df_topic_sample; change to df_clean for the final run.
+import gc
+import numpy as np
+import torch
+import torch.nn.functional as F
+from tqdm.auto import tqdm
+
+df_assign = df_clean
+texts = df_assign["cleaned_text"].tolist()
+topic_embeddings = topic_model.topic_embeddings_
+topic_ids = sorted(topic_model.get_topic_info()["Topic"].tolist())
+
+# Remove the outlier topic from nearest-centroid assignment so every tweet gets a mapped topic.
+if -1 in topic_ids:
+    outlier_position = topic_ids.index(-1)
+    topic_embeddings_for_assignment = np.delete(topic_embeddings, outlier_position, axis=0)
+    topic_ids_for_assignment = [topic_id for topic_id in topic_ids if topic_id != -1]
+else:
+    topic_embeddings_for_assignment = topic_embeddings
+    topic_ids_for_assignment = topic_ids
+
+batch_size = 100_000
+assign_embed_batch_size = 16_384
+min_assign_embed_batch_size = 1_024
+assigned_topics = []
+
+# Move the encoder back to GPU for full-corpus assignment after CPU-based BERTopic fitting.
+device = "cuda" if torch.cuda.is_available() else "cpu"
+embedding_model = embedding_model.to(device)
+if device == "cuda":
+    print_gpu("GPU before full assignment")
+
+# Keep topic centroids on GPU so nearest-topic scoring does not fall back to CPU sklearn.
+topic_embeddings_tensor = torch.as_tensor(
+    topic_embeddings_for_assignment,
+    dtype=torch.float32,
+    device=device
+)
+topic_embeddings_tensor = F.normalize(topic_embeddings_tensor, p=2, dim=1)
+
+def assign_topics_with_backoff(batch_texts, start_batch_size=16_384, min_batch_size=1_024):
+    # Use the largest embedding batch that fits GPU memory, then assign by GPU matmul.
+    current_batch_size = start_batch_size
+    last_error = None
+    while current_batch_size >= min_batch_size:
+        try:
+            with torch.inference_mode():
+                batch_embeddings = embedding_model.encode(
+                    batch_texts,
+                    batch_size=current_batch_size,
+                    show_progress_bar=False,
+                    normalize_embeddings=True,
+                    convert_to_tensor=True
+                ).to(device)
+                batch_embeddings = F.normalize(batch_embeddings.float(), p=2, dim=1)
+                sims = batch_embeddings @ topic_embeddings_tensor.T
+                best_positions = torch.argmax(sims, dim=1).detach().cpu().numpy()
+            del batch_embeddings, sims
+            return best_positions
+        except RuntimeError as e:
+            last_error = e
+            if "out of memory" not in str(e).lower():
+                raise
+            print(f"CUDA OOM in assignment at embed batch {current_batch_size:,}; retrying with {current_batch_size // 2:,}")
+            clear_cuda()
+            current_batch_size //= 2
+    raise RuntimeError(f"Could not assign topics without CUDA OOM. Last error: {last_error}")
+
+for start in tqdm(range(0, len(texts), batch_size), desc="Assigning topics"):
+    # Encode one chunk at a time and assign each tweet to its nearest learned topic centroid.
+    end = min(start + batch_size, len(texts))
+    batch_texts = texts[start:end]
+    best_topic_positions = assign_topics_with_backoff(
+        batch_texts,
+        start_batch_size=assign_embed_batch_size,
+        min_batch_size=min_assign_embed_batch_size
+    )
+    batch_topics = [topic_ids_for_assignment[int(i)] for i in best_topic_positions]
+    assigned_topics.extend(batch_topics)
+    del best_topic_positions
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+# Store the assigned topic IDs alongside the cleaned tweets.
+df_assign["topic"] = assigned_topics
+topics_path = INTERIM_DIR / "tweets_with_topics.parquet"
+# Save the topic-assigned corpus used by sentiment scoring.
+df_assign.to_parquet(topics_path, index=False)
+
+print("Saved:", topics_path)
+print(df_assign["topic"].value_counts().head(30))
+
+# Free GPU memory after assignment; keep topic_model for the next codebook export cell.
+del embedding_model, hdbscan_model
+del topic_embeddings, topic_embeddings_for_assignment, topic_embeddings_tensor, assigned_topics, texts
+gc.collect()
+if torch.cuda.is_available():
+    torch.cuda.empty_cache()
+    print(f"GPU memory allocated: {torch.cuda.memory_allocated() / 1e9:.2f} GB")
+    print(f"GPU memory reserved:  {torch.cuda.memory_reserved() / 1e9:.2f} GB")
+
+
+CELL 7 - Export topic codebook
+
+# Export topic keywords and assigned counts for manual political topic mapping.
+# Export topic IDs, assigned counts, and keywords for manual macro/micro mapping.
+topic_info = topic_model.get_topic_info()
+topic_counts = df_clean["topic"].value_counts()
+
+rows = []
+for _, row in topic_info.iterrows():
+    # Skip BERTopic's outlier label and keep human-readable keywords for each real topic.
+    topic_id = row["Topic"]
+    if topic_id == -1:
+        continue
+    words = topic_model.get_topic(topic_id)
+    keywords = ", ".join([word for word, score in words[:12]]) if words else ""
+    rows.append({
+        "topic": topic_id,
+        "assigned_count": int(topic_counts.get(topic_id, 0)),
+        "keywords": keywords
+    })
+
+df_topic_codebook = pd.DataFrame(rows).sort_values("assigned_count", ascending=False)
+codebook_path = OUTPUT_DIR / "topic_codebook.csv"
+df_topic_codebook.to_csv(codebook_path, index=False)
+
+pd.set_option("display.max_colwidth", None)
+display(df_topic_codebook.head(80))
+print("Saved:", codebook_path)
+

@@ -1,0 +1,60 @@
+M10_refined_direct 
+============================================================ 
+
+
+Results from Bootstrap resamples:  5000
+
+Bootstrapped Structural Paths:
+                   Original Est. Bootstrap Mean Bootstrap SD T Stat. 2.5% CI 97.5% CI Bootstrap P Val
+POLICY  ->  VOTE           0.390          0.399        0.108   3.610   0.185    0.609           0.002
+CONFLICT  ->  VOTE        -0.435         -0.426        0.110  -3.962  -0.629   -0.196           0.000
+
+Bootstrapped Weights:
+                                         Original Est. Bootstrap Mean Bootstrap SD T Stat. 2.5% CI 97.5% CI Bootstrap P Val
+border_security_salience  ->  POLICY             0.652          0.605        0.228   2.858   0.064    0.974           0.033
+healthcare_medicare_salience  ->  POLICY         0.603          0.601        0.209   2.877   0.153    0.980           0.018
+israel_palestine_salience  ->  CONFLICT          0.636          0.629        0.172   3.690   0.271    0.935           0.002
+felon_conviction_salience  ->  CONFLICT          0.709          0.697        0.139   5.095   0.390    0.929           0.002
+republican_pct  ->  VOTE                         1.000          1.000        0.000       .   1.000    1.000           0.000
+
+Bootstrapped Loadings:
+                                         Original Est. Bootstrap Mean Bootstrap SD T Stat. 2.5% CI 97.5% CI Bootstrap P Val
+border_security_salience  ->  POLICY             0.814          0.779        0.163   4.986   0.367    0.987           0.004
+healthcare_medicare_salience  ->  POLICY         0.778          0.762        0.187   4.163   0.269    0.995           0.012
+israel_palestine_salience  ->  CONFLICT          0.709          0.704        0.134   5.302   0.404    0.924           0.001
+felon_conviction_salience  ->  CONFLICT          0.775          0.752        0.151   5.115   0.386    0.965           0.003
+republican_pct  ->  VOTE                         1.000          1.000        0.000       .   1.000    1.000           0.000
+
+Bootstrapped HTMT:
+                     Original Est. Bootstrap Mean Bootstrap SD 2.5% CI 97.5% CI Bootstrap P Val
+POLICY  ->  CONFLICT         0.997          1.692        3.251   0.540    6.148           0.803
+POLICY  ->  VOTE             0.781          0.834        0.486   0.443    1.447           0.212
+CONFLICT  ->  VOTE           1.246          1.445        2.020   0.506    4.449           0.861
+
+Bootstrapped Total Paths:
+                   Original Est. Bootstrap Mean Bootstrap SD 2.5% CI 97.5% CI
+POLICY  ->  VOTE           0.390          0.399        0.108   0.185    0.609
+CONFLICT  ->  VOTE        -0.435         -0.426        0.110  -0.629   -0.196
+
+
+
+Model summary (estimate):
+------------------------------------------------------------ 
+
+Results from  package seminr (2.4.2)
+
+Path Coefficients:
+           VOTE
+R^2       0.434
+AdjR^2    0.410
+POLICY    0.390
+CONFLICT -0.435
+
+Reliability:
+         alpha  rhoA  rhoC   AVE
+POLICY   0.425 1.000 0.776 0.634
+CONFLICT 0.189 1.000 0.711 0.552
+VOTE     1.000 1.000 1.000 1.000
+
+Alpha, rhoA, and rhoC should exceed 0.7 while AVE should exceed 0.5
+

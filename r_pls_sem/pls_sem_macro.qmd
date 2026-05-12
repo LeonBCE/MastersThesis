@@ -1,0 +1,199 @@
+---
+title: "US Election PLS-SEM - Macro salience models"
+format: html
+editor: visual
+---
+
+## Load packages
+
+```{r}
+if (!require("tidyverse")) install.packages("tidyverse")
+library(tidyverse)
+
+if (!require("seminr")) install.packages("seminr")
+library(seminr)
+
+if (!require("DiagrammeRsvg")) install.packages("DiagrammeRsvg")
+library(DiagrammeRsvg)
+
+if (!require("rsvg")) install.packages("rsvg")
+library(rsvg)
+
+dir.create("macro_model_outputs", showWarnings = FALSE)
+report_dir <- "macro_model_outputs"
+```
+
+## Load data
+
+```{r}
+df <- read.csv("sem_dataset_macro.csv")
+
+required_cols <- c(
+  "State",
+  "republican_pct",
+  "Governance_Democracy_salience",
+  "Public_Health_salience",
+  "Economy_salience",
+  "Foreign_Policy_salience",
+  "Immigration_salience",
+  "Social_Issues_salience"
+)
+
+stopifnot(all(required_cols %in% names(df)))
+df <- df[, required_cols]
+
+numeric_cols <- setdiff(names(df), "State")
+df[numeric_cols] <- lapply(df[numeric_cols], as.numeric)
+
+summary(df)
+```
+
+## Helper functions
+
+```{r}
+save_plot <- function(model_object, filename, title_text = "") {
+  p <- plot(model_object, title = title_text)
+  svg_text <- DiagrammeRsvg::export_svg(p)
+  svg_text <- sub("(<svg[^>]*>)",
+                  "\\1\n<rect width=\"100%\" height=\"100%\" fill=\"white\"/>",
+                  svg_text)
+  rsvg::rsvg_png(charToRaw(svg_text),
+                 file.path("macro_model_outputs", paste0(filename, ".png")),
+                 width = 1400)
+}
+
+print_paths <- function(boot) {
+  paths <- as.data.frame(summary(boot)$bootstrapped_paths)
+  paths <- paths[!grepl("republican_pct", rownames(paths)), , drop = FALSE]
+  paths[, c("Original Est.", "T Stat.", "Bootstrap P Val")]
+}
+
+save_summary <- function(boot, est, filename) {
+  filepath <- file.path("macro_model_outputs", paste0(filename, ".txt"))
+  sink(filepath)
+  cat(filename, "\n")
+  cat(paste(rep("=", 60), collapse = ""), "\n\n")
+  print(summary(boot))
+  cat("\n\nModel summary (estimate):\n")
+  cat(paste(rep("-", 60), collapse = ""), "\n")
+  print(summary(est))
+  sink()
+}
+
+extract_vote_r2 <- function(model_summary) {
+  if (!is.null(model_summary$r_squared) && "VOTE" %in% rownames(model_summary$r_squared)) {
+    return(as.numeric(model_summary$r_squared["VOTE", "R^2"]))
+  }
+  NA_real_
+}
+```
+
+## Measurement models
+
+```{r}
+mm_salience <- constructs(
+  composite("DEMLAW", single_item("Governance_Democracy_salience")),
+  composite("DOMPOL", single_item("Public_Health_salience")),
+  composite("ECON",   single_item("Economy_salience")),
+  composite("FORPOL", single_item("Foreign_Policy_salience")),
+  composite("IMMIG",  single_item("Immigration_salience")),
+  composite("SOCISS", single_item("Social_Issues_salience")),
+  composite("VOTE",   single_item("republican_pct"))
+)
+
+models <- list()
+```
+
+## Structural models
+
+```{r}
+sm_all6 <- relationships(
+  paths(from = c("DEMLAW", "DOMPOL", "ECON", "FORPOL", "IMMIG", "SOCISS"), to = "VOTE")
+)
+
+sm_5topics <- relationships(
+  paths(from = c("DEMLAW", "ECON", "FORPOL", "IMMIG", "SOCISS"), to = "VOTE")
+)
+
+sm_4topics <- relationships(
+  paths(from = c("DEMLAW", "FORPOL", "IMMIG", "SOCISS"), to = "VOTE")
+)
+
+sm_3topics <- relationships(
+  paths(from = c("DEMLAW", "FORPOL", "IMMIG"), to = "VOTE")
+)
+```
+
+## M1: Salience only, all 6 -\> VOTE
+
+```{r}
+est_m1 <- estimate_pls(data = df, measurement_model = mm_salience, structural_model = sm_all6)
+set.seed(42)
+boot_m1 <- bootstrap_model(est_m1, nboot = 5000)
+print_paths(boot_m1)
+plot(boot_m1, title = "M1: Macro salience, all 6 -> VOTE")
+save_plot(boot_m1, "M1_macro_salience_all6", "M1: Macro salience, all 6 -> VOTE")
+save_summary(boot_m1, est_m1, "M1_macro_salience_all6")
+models[["M1_macro_salience_all6"]] <- list(label = "M1: Macro salience, all 6 -> VOTE",
+                                           summary = summary(est_m1),
+                                           report = file.path(report_dir, "M1_macro_salience_all6.txt"))
+```
+
+## M2: Salience only, 5 topics (DOMPOL dropped)
+
+```{r}
+est_m2 <- estimate_pls(data = df, measurement_model = mm_salience, structural_model = sm_5topics)
+set.seed(42)
+boot_m2 <- bootstrap_model(est_m2, nboot = 5000)
+print_paths(boot_m2)
+plot(boot_m2, title = "M2: Macro salience, 5 topics -> VOTE")
+save_plot(boot_m2, "M2_macro_salience_5topics", "M2: Macro salience, 5 topics -> VOTE")
+save_summary(boot_m2, est_m2, "M2_macro_salience_5topics")
+models[["M2_macro_salience_5topics"]] <- list(label = "M2: Macro salience, 5 topics -> VOTE",
+                                              summary = summary(est_m2),
+                                              report = file.path(report_dir, "M2_macro_salience_5topics.txt"))
+```
+
+## M3: Salience only, 4 topics (DOMPOL, ECON dropped)
+
+```{r}
+est_m3 <- estimate_pls(data = df, measurement_model = mm_salience, structural_model = sm_4topics)
+set.seed(42)
+boot_m3 <- bootstrap_model(est_m3, nboot = 5000)
+print_paths(boot_m3)
+plot(boot_m3, title = "M3: Macro salience, 4 topics -> VOTE")
+save_plot(boot_m3, "M3_macro_salience_4topics", "M3: Macro salience, 4 topics -> VOTE")
+save_summary(boot_m3, est_m3, "M3_macro_salience_4topics")
+models[["M3_macro_salience_4topics"]] <- list(label = "M3: Macro salience, 4 topics -> VOTE",
+                                              summary = summary(est_m3),
+                                              report = file.path(report_dir, "M3_macro_salience_4topics.txt"))
+```
+
+## M4: Salience only, core 3 (DEMLAW, FORPOL, IMMIG)
+
+```{r}
+est_m4 <- estimate_pls(data = df, measurement_model = mm_salience, structural_model = sm_3topics)
+set.seed(42)
+boot_m4 <- bootstrap_model(est_m4, nboot = 5000)
+print_paths(boot_m4)
+plot(boot_m4, title = "M4: Macro salience, core 3 -> VOTE")
+save_plot(boot_m4, "M4_macro_salience_core3", "M4: Macro salience, core 3 -> VOTE")
+save_summary(boot_m4, est_m4, "M4_macro_salience_core3")
+models[["M4_macro_salience_core3"]] <- list(label = "M4: Macro salience, core 3 -> VOTE",
+                                            summary = summary(est_m4),
+                                            report = file.path(report_dir, "M4_macro_salience_core3.txt"))
+```
+
+## Model comparison
+
+```{r}
+comparison <- tibble(
+  model = names(models),
+  label = vapply(models, function(x) x$label, character(1)),
+  vote_r2 = vapply(models, function(x) extract_vote_r2(x$summary), numeric(1)),
+  report_file = vapply(models, function(x) x$report, character(1))
+) %>%
+  arrange(desc(vote_r2))
+
+comparison
+```

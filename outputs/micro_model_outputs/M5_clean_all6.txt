@@ -1,0 +1,104 @@
+M5_clean_all6 
+============================================================ 
+
+
+Results from Bootstrap resamples:  5000
+
+Bootstrapped Structural Paths:
+                 Original Est. Bootstrap Mean Bootstrap SD T Stat. 2.5% CI 97.5% CI Bootstrap P Val
+DEMLAW  ->  VOTE        -0.331         -0.272        0.250  -1.323  -0.557    0.477           0.196
+DOMPOL  ->  VOTE         0.159          0.157        0.185   0.861  -0.214    0.532           0.373
+ECON  ->  VOTE          -0.068         -0.106        0.182  -0.377  -0.454    0.244           0.570
+FORPOL  ->  VOTE        -0.274         -0.280        0.113  -2.424  -0.508   -0.059           0.019
+IMMIG  ->  VOTE          0.333          0.299        0.129   2.572   0.046    0.545           0.022
+SOCISS  ->  VOTE        -0.017         -0.007        0.165  -0.105  -0.343    0.312           0.990
+
+Bootstrapped Weights:
+                                            Original Est. Bootstrap Mean Bootstrap SD T Stat. 2.5% CI 97.5% CI Bootstrap P Val
+felon_conviction_salience  ->  DEMLAW               1.031          0.803        0.493   2.093  -0.729    1.254           0.191
+project_2025_salience  ->  DEMLAW                  -0.044          0.039        0.286  -0.153  -0.436    0.673           0.992
+authoritarian_rhetoric_salience  ->  DEMLAW         0.062          0.091        0.382   0.161  -0.651    0.836           0.827
+healthcare_medicare_salience  ->  DOMPOL            1.000          1.000        0.000       .   1.000    1.000           0.000
+inflation_economy_salience  ->  ECON                1.000          1.000        0.000       .   1.000    1.000           0.000
+israel_palestine_salience  ->  FORPOL               1.000          1.000        0.000       .   1.000    1.000           0.000
+border_security_salience  ->  IMMIG                 1.000          1.000        0.000       .   1.000    1.000           0.000
+gender_abortion_salience  ->  SOCISS                0.881          0.419        0.583   1.511  -0.765    1.081           0.529
+climate_environment_salience  ->  SOCISS            0.275          0.444        0.581   0.473  -0.763    1.097           0.485
+republican_pct  ->  VOTE                            1.000          1.000        0.000       .   1.000    1.000           0.000
+
+Bootstrapped Loadings:
+                                            Original Est. Bootstrap Mean Bootstrap SD T Stat. 2.5% CI 97.5% CI Bootstrap P Val
+felon_conviction_salience  ->  DEMLAW               0.998          0.756        0.486   2.051  -0.831    0.997           0.188
+project_2025_salience  ->  DEMLAW                   0.071          0.133        0.309   0.231  -0.439    0.749           0.710
+authoritarian_rhetoric_salience  ->  DEMLAW        -0.420         -0.278        0.401  -1.048  -0.838    0.870           0.305
+healthcare_medicare_salience  ->  DOMPOL            1.000          1.000        0.000       .   1.000    1.000           0.000
+inflation_economy_salience  ->  ECON                1.000          1.000        0.000       .   1.000    1.000           0.000
+israel_palestine_salience  ->  FORPOL               1.000          1.000        0.000       .   1.000    1.000           0.000
+border_security_salience  ->  IMMIG                 1.000          1.000        0.000       .   1.000    1.000           0.000
+gender_abortion_salience  ->  SOCISS                0.965          0.557        0.465   2.074  -0.533    0.999           0.330
+climate_environment_salience  ->  SOCISS            0.546          0.572        0.461   1.183  -0.526    0.999           0.314
+republican_pct  ->  VOTE                            1.000          1.000        0.000       .   1.000    1.000           0.000
+
+Bootstrapped HTMT:
+                   Original Est. Bootstrap Mean Bootstrap SD 2.5% CI 97.5% CI Bootstrap P Val
+DEMLAW  ->  DOMPOL         0.372          0.402        0.141   0.172    0.726           0.008
+DEMLAW  ->  ECON           0.102          0.277        0.134   0.075    0.586           0.002
+DEMLAW  ->  FORPOL         0.449          0.484        0.171   0.214    0.860           0.016
+DEMLAW  ->  IMMIG          0.079          0.282        0.143   0.074    0.621           0.004
+DEMLAW  ->  SOCISS         0.833          1.019        1.022   0.402    2.457           0.691
+DEMLAW  ->  VOTE           0.465          0.516        0.157   0.237    0.866           0.016
+DOMPOL  ->  ECON           0.129          0.313        0.168   0.027    0.622           0.000
+DOMPOL  ->  FORPOL         0.309          0.361        0.119   0.186    0.631           0.000
+DOMPOL  ->  IMMIG          0.269          0.284        0.105   0.041    0.477           0.000
+DOMPOL  ->  SOCISS         0.673          0.646        0.356   0.117    1.121           0.100
+DOMPOL  ->  VOTE           0.396          0.403        0.122   0.102    0.607           0.000
+ECON  ->  FORPOL           0.034          0.116        0.087   0.005    0.327           0.000
+ECON  ->  IMMIG            0.028          0.123        0.090   0.006    0.332           0.000
+ECON  ->  SOCISS           0.127          0.341        0.317   0.062    0.860           0.032
+ECON  ->  VOTE             0.036          0.158        0.121   0.006    0.454           0.000
+FORPOL  ->  IMMIG          0.056          0.129        0.094   0.005    0.346           0.000
+FORPOL  ->  SOCISS         0.209          0.383        0.575   0.066    1.146           0.070
+FORPOL  ->  VOTE           0.384          0.386        0.102   0.168    0.570           0.000
+IMMIG  ->  SOCISS          0.036          0.239        0.289   0.039    0.665           0.021
+IMMIG  ->  VOTE            0.415          0.416        0.132   0.129    0.656           0.000
+SOCISS  ->  VOTE           0.147          0.289        0.289   0.045    0.721           0.023
+
+Bootstrapped Total Paths:
+                 Original Est. Bootstrap Mean Bootstrap SD 2.5% CI 97.5% CI
+DEMLAW  ->  VOTE        -0.331         -0.272        0.250  -0.557    0.477
+DOMPOL  ->  VOTE         0.159          0.157        0.185  -0.214    0.532
+ECON  ->  VOTE          -0.068         -0.106        0.182  -0.454    0.244
+FORPOL  ->  VOTE        -0.274         -0.280        0.113  -0.508   -0.059
+IMMIG  ->  VOTE          0.333          0.299        0.129   0.046    0.545
+SOCISS  ->  VOTE        -0.017         -0.007        0.165  -0.343    0.312
+
+
+
+Model summary (estimate):
+------------------------------------------------------------ 
+
+Results from  package seminr (2.4.2)
+
+Path Coefficients:
+         VOTE
+R^2     0.446
+AdjR^2  0.369
+DEMLAW -0.331
+DOMPOL  0.159
+ECON   -0.068
+FORPOL -0.274
+IMMIG   0.333
+SOCISS -0.017
+
+Reliability:
+        alpha  rhoA  rhoC   AVE
+DEMLAW -0.505 1.000 0.188 0.392
+DOMPOL  1.000 1.000 1.000 1.000
+ECON    1.000 1.000 1.000 1.000
+FORPOL  1.000 1.000 1.000 1.000
+IMMIG   1.000 1.000 1.000 1.000
+SOCISS  0.471 1.000 0.748 0.615
+VOTE    1.000 1.000 1.000 1.000
+
+Alpha, rhoA, and rhoC should exceed 0.7 while AVE should exceed 0.5
+

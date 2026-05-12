@@ -1,0 +1,7 @@
+Mapped macro topic	Included topic IDs	Topic meaning
+Foreign Policy	2, 41	Israel/Palestine and China/geopolitics
+Immigration	5, 21	Border security and fentanyl/drug-border discourse
+Economy	14, 16, 17, 25, 33	Inflation, markets, tax, student loans and labor
+Social Issues	1, 3, 24	Race, gender/abortion and climate
+Governance/Democracy	6, 7, 11	Felon conviction, Project 2025 and authoritarian rhetoric
+Domestic Policy	18, 19	COVID/vaccines and healthcare/Medicare

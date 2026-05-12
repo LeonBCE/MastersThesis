@@ -1,0 +1,425 @@
+﻿============================================================
+04_aggregation.ipynb
+============================================================
+
+CELL 1 - Install packages
+
+# Install packages needed for web tables and aggregation.
+!pip -q install pandas pyarrow lxml html5lib beautifulsoup4
+
+
+CELL 2 - Mount Drive and load scored tweets
+
+# Mount Google Drive and load tweets with topics and sentiment.
+from google.colab import drive
+drive.mount("/content/drive")
+
+from pathlib import Path
+import pandas as pd
+
+PROJECT_DIR = Path("/content/drive/MyDrive/Thesis_Clean_Pipeline")
+DATA_DIR = PROJECT_DIR / "data"
+INTERIM_DIR = DATA_DIR / "interim"
+OUTPUT_DIR = DATA_DIR / "outputs"
+
+for folder in [INTERIM_DIR, OUTPUT_DIR]:
+    folder.mkdir(parents=True, exist_ok=True)
+
+tweets_path = INTERIM_DIR / "tweets_with_topics_scores.parquet"
+# Load tweets after topic assignment and sentiment scoring.
+df = pd.read_parquet(tweets_path)
+
+print(f"Loaded scored tweets: {len(df):,}")
+display(df.head())
+
+
+CELL 3 - Define political topic mappings
+
+# Final mappings are based on topic_codebook (1).csv from the 1M BERTopic run.
+# Campaign/personality/meta topics are intentionally left unmapped for SEM.
+MACRO_TOPIC_MAPPING = {
+    "Foreign_Policy":        [2, 41],          # Israel/Palestine/Gaza; China/geopolitics
+    "Immigration":           [5, 21],          # border security; fentanyl/drug-border discourse
+    "Economy":               [14, 16, 17, 25, 33],  # inflation, markets, tax, student loans, labor
+    "Social_Issues":         [1, 3, 24],       # race, gender/abortion, climate
+    "Governance_Democracy":  [6, 7, 11],       # felon conviction, Project 2025, fascism/democracy rhetoric
+    "Public_Health":         [18, 19],         # covid/vaccines, Medicare/healthcare
+}
+
+# Micro mapping keeps narrower issue themes for refined SEM models.
+MICRO_TOPIC_MAPPING = {
+    # Foreign Policy
+    "israel_palestine":       [2],
+    "china_geopolitics":      [41],
+    # Immigration
+    "border_security":        [5],
+    "fentanyl_drugs":         [21],
+    # Economy
+    "inflation_economy":      [14],
+    "crypto_markets":         [16],
+    "tax_policy":             [17],
+    "student_loans":          [25],
+    "labor_unions":           [33],
+    # Social Issues
+    "race_discourse":         [1],
+    "gender_abortion":        [3],
+    "climate_environment":    [24],
+    # Governance / democracy
+    "felon_conviction":       [6],
+    "project_2025":           [7],
+    "authoritarian_rhetoric": [11],
+    # Public Health
+    "covid_vaccine":          [18],
+    "healthcare_medicare":    [19],
+}
+
+print("Macro mapping:", MACRO_TOPIC_MAPPING)
+print("Micro mapping:", MICRO_TOPIC_MAPPING)
+
+
+CELL 4 - Fetch election results and controls
+
+# Fetch election results and demographic control variables.
+import io
+import requests
+
+# State whitelist excludes territories and DC from the final state-level SEM dataset.
+US_STATES = {
+    "Alabama": "AL", "Alaska": "AK", "Arizona": "AZ", "Arkansas": "AR", "California": "CA",
+    "Colorado": "CO", "Connecticut": "CT", "Delaware": "DE", "Florida": "FL", "Georgia": "GA",
+    "Hawaii": "HI", "Idaho": "ID", "Illinois": "IL", "Indiana": "IN", "Iowa": "IA",
+    "Kansas": "KS", "Kentucky": "KY", "Louisiana": "LA", "Maine": "ME", "Maryland": "MD",
+    "Massachusetts": "MA", "Michigan": "MI", "Minnesota": "MN", "Mississippi": "MS",
+    "Missouri": "MO", "Montana": "MT", "Nebraska": "NE", "Nevada": "NV",
+    "New Hampshire": "NH", "New Jersey": "NJ", "New Mexico": "NM", "New York": "NY",
+    "North Carolina": "NC", "North Dakota": "ND", "Ohio": "OH", "Oklahoma": "OK",
+    "Oregon": "OR", "Pennsylvania": "PA", "Rhode Island": "RI", "South Carolina": "SC",
+    "South Dakota": "SD", "Tennessee": "TN", "Texas": "TX", "Utah": "UT",
+    "Vermont": "VT", "Virginia": "VA", "Washington": "WA", "West Virginia": "WV",
+    "Wisconsin": "WI", "Wyoming": "WY",
+}
+
+# Use full state names because tweet locations and public tables are state-name based.
+valid_states = list(US_STATES.keys())
+
+def read_html_tables(url, params=None):
+    # Fetch HTML with a browser-like header and fail with diagnostics if no tables are returned.
+    response = requests.get(
+        url,
+        params=params,
+        headers={
+            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/120 Safari/537.36"
+        },
+        timeout=60
+    )
+    response.raise_for_status()
+    if "api.php" in response.url:
+        # Wikipedia API responses wrap article HTML inside a JSON field.
+        html = response.json()["parse"]["text"]["*"]
+    else:
+        # Normal Wikipedia and action=render URLs return article HTML directly.
+        html = response.text
+    if "<table" not in html.lower():
+        print("No table tags found at:", response.url)
+        print("Response preview:", html[:500])
+        return []
+    return pd.read_html(io.StringIO(html))
+
+# Pull 2024 presidential vote shares from the public results table.
+election_table_urls = [
+    "https://en.wikipedia.org/wiki/2024_United_States_presidential_election",
+    "https://en.wikipedia.org/w/index.php?title=2024_United_States_presidential_election&action=render",
+    "https://en.wikipedia.org/w/api.php?action=parse&page=2024_United_States_presidential_election&prop=text&format=json",
+]
+
+tables = []
+for election_url in election_table_urls:
+    try:
+        tables = read_html_tables(election_url)
+        if tables:
+            break
+    except Exception as e:
+        print(f"Could not read election tables from {election_url}: {e}")
+
+if not tables:
+    raise RuntimeError("Could not fetch election-result tables from Wikipedia. Rerun the cell or upload state_controls.csv.")
+
+df_election = None
+for table in tables:
+    # Identify the results table by candidate names and a state/district column.
+    col_text = str(table.columns).lower()
+    if "trump" in col_text and "harris" in col_text and ("state" in col_text or "district" in col_text):
+        df_election = table
+        break
+
+if df_election is None:
+    raise RuntimeError("Election results table not found among fetched Wikipedia tables.")
+
+# Flatten multi-level Wikipedia headers so columns can be selected by text search.
+df_election.columns = [" ".join([str(x) for x in col]).strip() if isinstance(col, tuple) else str(col) for col in df_election.columns]
+state_col = next(c for c in df_election.columns if "state" in c.lower())
+rep_col = next(c for c in df_election.columns if "trump" in c.lower() and "%" in c.lower())
+dem_col = next(c for c in df_election.columns if "harris" in c.lower() and "%" in c.lower())
+
+# Keep only state name and two-party candidate percentages needed for SEM.
+df_election = df_election[[state_col, rep_col, dem_col]].copy()
+df_election.columns = ["State", "republican_pct", "democrat_pct"]
+df_election["State"] = (
+    df_election["State"]
+    .astype(str)
+    .str.replace(r"\[.*?\]", "", regex=True)
+    .str.replace("†", "", regex=False)
+    .str.replace(r"\s+", " ", regex=True)
+    .str.strip()
+)
+df_election = df_election[df_election["State"].isin(valid_states)].copy()
+df_election = df_election.drop_duplicates(subset=["State"], keep="first")
+for col in ["republican_pct", "democrat_pct"]:
+    # Convert percentage strings to numeric percentages.
+    df_election[col] = df_election[col].astype(str).str.replace("%", "", regex=False).astype(float)
+
+missing_election_states = sorted(set(valid_states) - set(df_election["State"]))
+if missing_election_states:
+    # Stop early if any state failed to merge, because SEM needs a complete state panel.
+    raise RuntimeError(f"Missing election controls for states: {missing_election_states}")
+
+# ACS variables provide demographic controls used in the SEM dataset.
+census_variables = [
+    "B01003_001E", "B03002_003E", "B15003_001E", "B15003_022E", "B15003_023E",
+    "B15003_024E", "B15003_025E", "B19013_001E", "B05002_013E",
+]
+
+# Fetch state-level ACS 5-year estimates without requiring a Census API key.
+census_url = "https://api.census.gov/data/2022/acs/acs5"
+params = {"get": "NAME," + ",".join(census_variables), "for": "state:*"}
+census_json = requests.get(census_url, params=params).json()
+df_demo = pd.DataFrame(census_json[1:], columns=census_json[0])
+# Rename Census codes into readable control-variable names.
+df_demo = df_demo.rename(columns={
+    "NAME": "State",
+    "B01003_001E": "total_pop",
+    "B03002_003E": "white_nonhisp",
+    "B15003_001E": "education_25plus",
+    "B15003_022E": "bachelors",
+    "B15003_023E": "masters",
+    "B15003_024E": "professional",
+    "B15003_025E": "doctorate",
+    "B19013_001E": "median_income",
+    "B05002_013E": "foreign_born",
+})
+
+num_cols = ["total_pop", "white_nonhisp", "education_25plus", "bachelors", "masters", "professional", "doctorate", "median_income", "foreign_born"]
+for col in num_cols:
+    # Coerce all Census fields to numeric before computing state percentages.
+    df_demo[col] = pd.to_numeric(df_demo[col], errors="coerce")
+
+# Convert raw counts into comparable state-level demographic percentages.
+df_demo["pct_white"] = df_demo["white_nonhisp"] / df_demo["total_pop"] * 100
+df_demo["pct_college"] = (df_demo["bachelors"] + df_demo["masters"] + df_demo["professional"] + df_demo["doctorate"]) / df_demo["education_25plus"] * 100
+df_demo["pct_foreign_born"] = df_demo["foreign_born"] / df_demo["total_pop"] * 100
+df_demo = df_demo[df_demo["State"].isin(valid_states)][["State", "median_income", "pct_white", "pct_college", "pct_foreign_born"]].copy()
+
+# Pull urbanization from a public state table to add geographic context.
+urban_table_urls = [
+    "https://en.wikipedia.org/wiki/Urbanization_in_the_United_States",
+    "https://en.wikipedia.org/w/index.php?title=Urbanization_in_the_United_States&action=render",
+    "https://en.wikipedia.org/w/api.php?action=parse&page=Urbanization_in_the_United_States&prop=text&format=json",
+]
+urban_tables = []
+for urban_url in urban_table_urls:
+    try:
+        urban_tables = read_html_tables(urban_url)
+        if urban_tables:
+            break
+    except Exception as e:
+        print(f"Could not read urbanization tables from {urban_url}: {e}")
+
+if not urban_tables:
+    raise RuntimeError("Could not fetch urbanization tables from Wikipedia. Rerun the cell or upload state_controls.csv.")
+
+df_urban = None
+for table in urban_tables:
+    # Find the urbanization table by the 2020 urban share column.
+    col_text = str(table.columns).lower()
+    if "2020" in col_text and ("state" in col_text or "territory" in col_text):
+        df_urban = table
+        break
+
+if df_urban is None:
+    raise RuntimeError("Urbanization table not found among fetched Wikipedia tables.")
+
+# Standardize table headers before selecting the state and urban columns.
+df_urban.columns = [str(c).strip() for c in df_urban.columns]
+state_col = next(c for c in df_urban.columns if "state" in c.lower() or "territory" in c.lower())
+urban_col = next(c for c in df_urban.columns if "2020" in c)
+df_urban = df_urban[[state_col, urban_col]].copy()
+df_urban.columns = ["State", "pct_urban"]
+df_urban["State"] = df_urban["State"].astype(str).str.replace(r"\[.*?\]", "", regex=True).str.strip()
+df_urban["pct_urban"] = pd.to_numeric(df_urban["pct_urban"].astype(str).str.replace("%", "", regex=False), errors="coerce")
+df_urban = df_urban[df_urban["State"].isin(valid_states)].copy()
+
+# Merge election outcomes and demographic controls into one state-level control table.
+df_controls = df_election.merge(df_demo, on="State", how="inner").merge(df_urban, on="State", how="inner")
+missing_control_states = sorted(set(valid_states) - set(df_controls["State"]))
+if missing_control_states:
+    # A complete 50-state controls table is required before merging tweet aggregates.
+    raise RuntimeError(f"Missing merged controls for states: {missing_control_states}")
+controls_path = OUTPUT_DIR / "state_controls.csv"
+df_controls.to_csv(controls_path, index=False)
+
+print("Saved:", controls_path)
+print("Controls rows:", len(df_controls))
+display(df_controls)
+
+
+CELL 5 - Aggregate macro dataset
+
+# Aggregate state-level salience and sentiment using the macro topic mapping.
+df_outcome = pd.read_csv(OUTPUT_DIR / "state_controls.csv")[["State", "republican_pct"]]
+
+# Expand the macro mapping into a topic_id -> macro_name lookup.
+topic_to_macro = {}
+for macro_name, topic_ids in MACRO_TOPIC_MAPPING.items():
+    for topic_id in topic_ids:
+        topic_to_macro[topic_id] = macro_name
+
+# Label each tweet with its macro construct if its BERTopic topic is political.
+df["macro_topic"] = df["topic"].map(topic_to_macro)
+df_political = df[df["macro_topic"].notna() & df["state"].notna()].copy()
+
+# Denominator uses all state-mapped tweets, not only political mapped tweets.
+state_totals = df[df["state"].notna()].groupby("state").size().rename("total_tweets")
+# Salience is the share of all state tweets assigned to each macro topic.
+topic_counts = pd.crosstab(df_political["state"], df_political["macro_topic"])
+topic_salience = topic_counts.div(state_totals, axis=0)
+topic_salience.columns = [f"{col}_salience" for col in topic_salience.columns]
+
+# Join salience, tweet totals, and Republican vote share for the working table.
+df_macro = topic_salience.join(state_totals).reset_index().rename(columns={"state": "State"})
+df_macro = df_macro.merge(df_outcome, on="State", how="inner")
+
+first_cols = ["State", "total_tweets", "republican_pct"]
+other_cols = [col for col in df_macro.columns if col not in first_cols]
+df_macro = df_macro[first_cols + sorted(other_cols)]
+
+# Keep macro salience columns in the same order as the thesis-level macro mapping.
+macro_salience_cols = [
+    f"{macro_name}_salience"
+    for macro_name in MACRO_TOPIC_MAPPING
+    if f"{macro_name}_salience" in df_macro.columns
+]
+macro_export_cols = ["State", "republican_pct"] + macro_salience_cols
+df_macro_export = df_macro[macro_export_cols].copy()
+
+# Min-max normalize the requested export columns for SEM.
+df_macro_norm = df_macro_export.copy()
+numeric_cols = df_macro_norm.columns.drop("State")
+# Normalize numeric variables to [0, 1] so PLS-SEM indicators share scale.
+macro_ranges = (df_macro_norm[numeric_cols].max() - df_macro_norm[numeric_cols].min()).replace(0, 1)
+df_macro_norm[numeric_cols] = (df_macro_norm[numeric_cols] - df_macro_norm[numeric_cols].min()) / macro_ranges
+
+# Save the primary macro SEM file with clean normalized columns only.
+macro_clean_cols = ["State", "republican_pct"] + macro_salience_cols
+df_macro_salience_clean = df_macro_norm[macro_clean_cols].copy()
+
+macro_path = OUTPUT_DIR / "sem_dataset_macro.csv"
+macro_norm_path = OUTPUT_DIR / "sem_dataset_macro_normalized.csv"
+macro_salience_clean_path = OUTPUT_DIR / "sem_dataset_macro_salience_clean.csv"
+legacy_macro_raw_path = OUTPUT_DIR / "sem_dataset_macro_raw.csv"
+if legacy_macro_raw_path.exists():
+    # Remove the old wide/raw export name so stale files cannot be mistaken for SEM input.
+    legacy_macro_raw_path.unlink()
+
+df_macro_salience_clean.to_csv(macro_path, index=False)
+df_macro_salience_clean.to_csv(macro_norm_path, index=False)
+df_macro_salience_clean.to_csv(macro_salience_clean_path, index=False)
+
+print("Saved clean macro:", macro_path)
+print("Saved normalized:", macro_norm_path)
+print("Saved clean salience:", macro_salience_clean_path)
+print("Clean macro columns:", list(df_macro_salience_clean.columns))
+print("Clean macro numeric min/max:")
+display(df_macro_salience_clean.drop(columns=["State"]).agg(["min", "max"]))
+print(df_macro_salience_clean.shape)
+display(df_macro_salience_clean.head())
+
+
+CELL 6 - Aggregate micro dataset
+
+# Aggregate state-level salience and sentiment using the micro topic mapping.
+df_outcome = pd.read_csv(OUTPUT_DIR / "state_controls.csv")[["State", "republican_pct"]]
+
+# Expand the micro mapping into a topic_id -> micro_name lookup.
+topic_to_micro = {}
+for micro_name, topic_ids in MICRO_TOPIC_MAPPING.items():
+    for topic_id in topic_ids:
+        topic_to_micro[topic_id] = micro_name
+
+# Label each tweet with its narrower issue construct when mapped.
+df["micro_topic"] = df["topic"].map(topic_to_micro)
+df_political = df[df["micro_topic"].notna() & df["state"].notna()].copy()
+
+# Reuse the all-tweets denominator so micro salience is comparable to macro salience.
+state_totals = df[df["state"].notna()].groupby("state").size().rename("total_tweets")
+# Calculate state-level micro-topic salience as the share of all state tweets.
+topic_counts = pd.crosstab(df_political["state"], df_political["micro_topic"])
+topic_salience = topic_counts.div(state_totals, axis=0)
+topic_salience.columns = [f"{col}_salience" for col in topic_salience.columns]
+
+# Join micro salience, tweet totals, and Republican vote share for the working table.
+df_micro = topic_salience.join(state_totals).reset_index().rename(columns={"state": "State"})
+df_micro = df_micro.merge(df_outcome, on="State", how="inner")
+
+first_cols = ["State", "total_tweets", "republican_pct"]
+other_cols = [col for col in df_micro.columns if col not in first_cols]
+df_micro = df_micro[first_cols + sorted(other_cols)]
+
+# Order micro salience columns by their parent macro topic, then by mapping order within that macro.
+ordered_micro_names = []
+for macro_name, macro_topic_ids in MACRO_TOPIC_MAPPING.items():
+    for micro_name, micro_topic_ids in MICRO_TOPIC_MAPPING.items():
+        if micro_name not in ordered_micro_names and set(micro_topic_ids).intersection(macro_topic_ids):
+            ordered_micro_names.append(micro_name)
+
+# Append any unmapped future micro entries at the end instead of silently dropping them.
+ordered_micro_names.extend([name for name in MICRO_TOPIC_MAPPING if name not in ordered_micro_names])
+micro_salience_cols = [
+    f"{micro_name}_salience"
+    for micro_name in ordered_micro_names
+    if f"{micro_name}_salience" in df_micro.columns
+]
+micro_export_cols = ["State", "republican_pct"] + micro_salience_cols
+df_micro_export = df_micro[micro_export_cols].copy()
+
+# Min-max normalize the requested export columns for SEM.
+df_micro_norm = df_micro_export.copy()
+numeric_cols = df_micro_norm.columns.drop("State")
+# Min-max normalize all numeric micro-topic, outcome, and control variables.
+micro_ranges = (df_micro_norm[numeric_cols].max() - df_micro_norm[numeric_cols].min()).replace(0, 1)
+df_micro_norm[numeric_cols] = (df_micro_norm[numeric_cols] - df_micro_norm[numeric_cols].min()) / micro_ranges
+
+# Save the primary micro SEM file with clean normalized columns only.
+micro_clean_cols = ["State", "republican_pct"] + micro_salience_cols
+df_micro_salience_clean = df_micro_norm[micro_clean_cols].copy()
+
+micro_path = OUTPUT_DIR / "sem_dataset_micro.csv"
+micro_norm_path = OUTPUT_DIR / "sem_dataset_micro_normalized.csv"
+micro_salience_clean_path = OUTPUT_DIR / "sem_dataset_micro_salience_clean.csv"
+legacy_micro_raw_path = OUTPUT_DIR / "sem_dataset_micro_raw.csv"
+if legacy_micro_raw_path.exists():
+    # Remove the old wide/raw export name so stale files cannot be mistaken for SEM input.
+    legacy_micro_raw_path.unlink()
+
+df_micro_salience_clean.to_csv(micro_path, index=False)
+df_micro_salience_clean.to_csv(micro_norm_path, index=False)
+df_micro_salience_clean.to_csv(micro_salience_clean_path, index=False)
+
+print("Saved clean micro:", micro_path)
+print("Saved normalized:", micro_norm_path)
+print("Saved clean salience:", micro_salience_clean_path)
+print("Clean micro columns:", list(df_micro_salience_clean.columns))
+print("Clean micro numeric min/max:")
+display(df_micro_salience_clean.drop(columns=["State"]).agg(["min", "max"]))
+print(df_micro_salience_clean.shape)
+display(df_micro_salience_clean.head())
+

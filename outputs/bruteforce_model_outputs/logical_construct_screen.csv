@@ -1,0 +1,8 @@
+"model_id","family","label","n_predictors","r2","adj_r2","paths","error"
+"logical_6","logical_constructs","micro_security_conflict",2,0.440802471790208,0.417006832291919,"SECURITY 0.362; CONFLICT -0.518",NA
+"logical_3","logical_constructs","micro_policy_conflict_broad",2,0.437358259060915,0.413416057318826,"POLICY 0.395; CONFLICT -0.431",NA
+"logical_4","logical_constructs","micro_policy_conflict_refined",2,0.434316441357557,0.410244800564261,"POLICY 0.39; CONFLICT -0.435",NA
+"logical_1","logical_constructs","macro_policy_conflict",2,0.321387715248141,0.292510596748062,"POLICY 0.403; CONFLICT -0.343",NA
+"logical_2","logical_constructs","macro_material_symbolic",2,0.321387715248141,0.292510596748062,"MATERIAL 0.403; SYMBOLIC -0.343",NA
+"logical_5","logical_constructs","micro_democracy_conflict",2,0.288406379807157,0.258125800224482,"DEMOCRACY -0.367; CONFLICT -0.338",NA
+"logical_7","logical_constructs","micro_economic_security",2,0.257514542260409,0.22591941639915,"ECONOMIC 0.294; SECURITY 0.323",NA

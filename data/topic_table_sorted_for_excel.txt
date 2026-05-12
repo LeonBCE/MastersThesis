@@ -1,0 +1,13 @@
+Topic ID	Number of assigned tweets	Keywords	Final treatment
+0	1,455,739	Matt Gaetz, attorney general, nomination	Excluded as campaign/personality-specific
+2	547,518	Israel, Palestine, Hamas, Gaza, foreign policy	Retained as Foreign Policy and Israel/Palestine
+5	374,066	Open border, border security, immigration, deportation	Retained as Immigration and border security
+6	402,726	Convicted felon, felony, criminal, conviction	Retained as Governance/Democracy and felon conviction
+7	274,629	Project 2025, Heritage Foundation, agenda	Retained in Governance/Democracy mapping
+9	325,638	Milwaukee, RNC 2024, Chicago, convention	Excluded as campaign-event discourse
+11	473,941	Nazi, fascist, Hitler, fascism, communist	Retained as authoritarian rhetoric
+14	182,439	Inflation, gas prices, economy, corporate greed	Retained as Economy and inflation
+15	477,344	Weird, weirdo, did, wtf	Excluded as meme/rhetorical noise
+17	178,106	Tax cuts, tax breaks, taxpayers, IRS, debt	Retained as Economy and tax policy
+18	90,228	COVID, pandemic, flu, vaccines, virus	Retained as Domestic Policy and COVID
+19	42,144	Medicare, Medicaid, healthcare, pharma, insurance	Retained as Domestic Policy and healthcare

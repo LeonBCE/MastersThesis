@@ -1,0 +1,64 @@
+M8_policy_conflict_direct 
+============================================================ 
+
+
+Results from Bootstrap resamples:  5000
+
+Bootstrapped Structural Paths:
+                   Original Est. Bootstrap Mean Bootstrap SD T Stat. 2.5% CI 97.5% CI Bootstrap P Val
+POLICY  ->  VOTE           0.395          0.424        0.124   3.175   0.200    0.644           0.010
+CONFLICT  ->  VOTE        -0.431         -0.424        0.115  -3.748  -0.636   -0.193           0.002
+
+Bootstrapped Weights:
+                                         Original Est. Bootstrap Mean Bootstrap SD T Stat. 2.5% CI 97.5% CI Bootstrap P Val
+border_security_salience  ->  POLICY             0.642          0.560        0.237   2.703   0.013    0.934           0.047
+inflation_economy_salience  ->  POLICY          -0.168         -0.126        0.340  -0.492  -0.697    0.634           0.647
+healthcare_medicare_salience  ->  POLICY         0.616          0.597        0.251   2.453   0.025    1.031           0.042
+israel_palestine_salience  ->  CONFLICT          0.635          0.619        0.171   3.713   0.262    0.920           0.003
+felon_conviction_salience  ->  CONFLICT          0.699          0.670        0.150   4.675   0.336    0.913           0.004
+gender_abortion_salience  ->  CONFLICT          -0.044         -0.037        0.237  -0.187  -0.518    0.401           0.892
+republican_pct  ->  VOTE                         1.000          1.000        0.000       .   1.000    1.000           0.000
+
+Bootstrapped Loadings:
+                                         Original Est. Bootstrap Mean Bootstrap SD T Stat. 2.5% CI 97.5% CI Bootstrap P Val
+border_security_salience  ->  POLICY             0.803          0.733        0.179   4.490   0.296    0.960           0.012
+inflation_economy_salience  ->  POLICY          -0.070         -0.081        0.344  -0.203  -0.754    0.580           0.835
+healthcare_medicare_salience  ->  POLICY         0.767          0.713        0.197   3.898   0.192    0.967           0.021
+israel_palestine_salience  ->  CONFLICT          0.709          0.684        0.137   5.176   0.380    0.907           0.003
+felon_conviction_salience  ->  CONFLICT          0.774          0.731        0.153   5.057   0.370    0.950           0.004
+gender_abortion_salience  ->  CONFLICT          -0.192         -0.179        0.238  -0.805  -0.605    0.311           0.441
+republican_pct  ->  VOTE                         1.000          1.000        0.000       .   1.000    1.000           0.000
+
+Bootstrapped HTMT:
+                     Original Est. Bootstrap Mean Bootstrap SD 2.5% CI 97.5% CI Bootstrap P Val
+POLICY  ->  CONFLICT         1.008          1.049        0.328   0.588    1.811           0.983
+POLICY  ->  VOTE             0.749          0.683        0.167   0.348    1.016           0.059
+CONFLICT  ->  VOTE           0.932          0.837        0.230   0.454    1.364           0.355
+
+Bootstrapped Total Paths:
+                   Original Est. Bootstrap Mean Bootstrap SD 2.5% CI 97.5% CI
+POLICY  ->  VOTE           0.395          0.424        0.124   0.200    0.644
+CONFLICT  ->  VOTE        -0.431         -0.424        0.115  -0.636   -0.193
+
+
+
+Model summary (estimate):
+------------------------------------------------------------ 
+
+Results from  package seminr (2.4.2)
+
+Path Coefficients:
+           VOTE
+R^2       0.437
+AdjR^2    0.413
+POLICY    0.395
+CONFLICT -0.431
+
+Reliability:
+          alpha  rhoA  rhoC   AVE
+POLICY    0.332 1.000 0.561 0.413
+CONFLICT -0.117 1.000 0.472 0.379
+VOTE      1.000 1.000 1.000 1.000
+
+Alpha, rhoA, and rhoC should exceed 0.7 while AVE should exceed 0.5
+
