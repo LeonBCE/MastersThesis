@@ -53,8 +53,6 @@ from huggingface_hub import login
 login(token=userdata.get("HF_TOKEN"))
 ```
 
-Do not hard-code Hugging Face tokens into notebooks.
-
 The R/Quarto files can be run locally in RStudio after placing the final CSV datasets in the working directory expected by the scripts, or after updating the file paths at the top of the QMD files.
 
 ## Main Outputs
