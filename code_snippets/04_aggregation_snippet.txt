@@ -183,7 +183,7 @@ if missing_election_states:
     # Stop early if any state failed to merge, because SEM needs a complete state panel.
     raise RuntimeError(f"Missing election controls for states: {missing_election_states}")
 
-# ACS variables provide demographic controls used in the SEM dataset.
+# ACS variables provide contextual controls for checking, but they are not retained in final SEM exports.
 census_variables = [
     "B01003_001E", "B03002_003E", "B15003_001E", "B15003_022E", "B15003_023E",
     "B15003_024E", "B15003_025E", "B19013_001E", "B05002_013E",
@@ -274,7 +274,7 @@ display(df_controls)
 
 CELL 5 - Aggregate macro dataset
 
-# Aggregate state-level salience and sentiment using the macro topic mapping.
+# Aggregate state-level topic salience using the macro topic mapping.
 df_outcome = pd.read_csv(OUTPUT_DIR / "state_controls.csv")[["State", "republican_pct"]]
 
 # Expand the macro mapping into a topic_id -> macro_name lookup.
@@ -346,7 +346,7 @@ display(df_macro_salience_clean.head())
 
 CELL 6 - Aggregate micro dataset
 
-# Aggregate state-level salience and sentiment using the micro topic mapping.
+# Aggregate state-level topic salience using the micro topic mapping.
 df_outcome = pd.read_csv(OUTPUT_DIR / "state_controls.csv")[["State", "republican_pct"]]
 
 # Expand the micro mapping into a topic_id -> micro_name lookup.
@@ -394,7 +394,7 @@ df_micro_export = df_micro[micro_export_cols].copy()
 # Min-max normalize the requested export columns for SEM.
 df_micro_norm = df_micro_export.copy()
 numeric_cols = df_micro_norm.columns.drop("State")
-# Min-max normalize all numeric micro-topic, outcome, and control variables.
+# Min-max normalize the selected outcome and micro-topic salience columns.
 micro_ranges = (df_micro_norm[numeric_cols].max() - df_micro_norm[numeric_cols].min()).replace(0, 1)
 df_micro_norm[numeric_cols] = (df_micro_norm[numeric_cols] - df_micro_norm[numeric_cols].min()) / micro_ranges
 
