@@ -58,3 +58,12 @@ VOTE     1.000 1.000 1.000 1.000
 
 Alpha, rhoA, and rhoC should exceed 0.7 while AVE should exceed 0.5
 
+Structural collinearity VIF:
+  predictor      vif
+1    POLICY   1.0809
+2  CONFLICT   1.0809
+
+Note: VIF computed as 1 / (1 - R^2) from lm(POLICY ~ CONFLICT) on standardized
+construct scores (w_border=0.652, w_health=0.603, w_israel=0.636, w_felon=0.709).
+Pearson r(POLICY, CONFLICT) = -0.2735. Both predictors well below VIF threshold of 5.
+
