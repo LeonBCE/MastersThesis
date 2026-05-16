@@ -14,9 +14,8 @@ Topic IDs are not stable across independent BERTopic training runs. The final ma
 
 ## Stance
 
-Stance detection was attempted with a zero-shot NLI model, but validation showed that the output was not reliable enough for final modelling. The stance output is kept only as diagnostic evidence and should not be used as a final SEM predictor without additional supervised validation.
+Stance detection was attempted with a zero-shot NLI model, but validation showed that the output was not reliable enough for final modelling. The validation files in `docs/validation/` use an AI-assisted diagnostic test set rather than a human-coded benchmark. The stance output is kept only as diagnostic evidence and should not be used as a final SEM predictor without additional supervised validation.
 
 ## PLS-SEM
 
 The R/Quarto models use the final state-level SEM CSVs. Bootstrapping results should be interpreted from the tabular model outputs rather than only from stars shown in plotted diagrams.
-

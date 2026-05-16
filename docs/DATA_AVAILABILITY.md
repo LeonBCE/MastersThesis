@@ -26,6 +26,8 @@ data/macro_topic_mapping_for_excel.txt
 
 These files are state-level or topic-level summaries rather than raw tweet-level text.
 
+The `docs/validation/` folder also includes the small diagnostic stance-validation script, report, and per-item result table used to document why stance was not retained as a final SEM input.
+
 ## Files Needed From Google Drive If Rerunning the Full Pipeline
 
 If rerunning the full pipeline from notebook 01, no intermediate files need to be downloaded from Drive first. The notebooks regenerate the downstream files in order from the raw Hugging Face source.
@@ -71,4 +73,3 @@ Notebook 04 fetches state-level election results and contextual variables from p
 - A public state-level urbanization table.
 
 The final SEM exports in this repository keep only state name, Republican vote share, and topic salience variables.
-

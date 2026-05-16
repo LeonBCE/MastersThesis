@@ -23,6 +23,7 @@ data/                       Small final CSV exports used by the R models
 outputs/                    Selected model output summaries and figures
 figures/                    Selected visualization outputs
 docs/                       Data availability and reproducibility notes
+docs/validation/            Diagnostic stance-validation files
 ```
 
 ## Data
@@ -53,6 +54,8 @@ from huggingface_hub import login
 login(token=userdata.get("HF_TOKEN"))
 ```
 
+Do not hard-code Hugging Face tokens into notebooks.
+
 The R/Quarto files can be run locally in RStudio after placing the final CSV datasets in the working directory expected by the scripts, or after updating the file paths at the top of the QMD files.
 
 ## Main Outputs
@@ -77,7 +80,6 @@ outputs/micro_model_outputs/M10_refined_direct.png
 
 ## Notes
 
-Stance detection was retained as a diagnostic branch only. Validation showed that the zero-shot stance classifier did not recover political direction reliably enough, so stance is not used as a final SEM variable.
+Stance detection was retained as a diagnostic branch only. The included validation files use an AI-assisted diagnostic test set, not a human-coded benchmark, and show that the zero-shot stance classifier did not recover political direction reliably enough. Stance is therefore not used as a final SEM variable.
 
 Sentiment was scored and inspected, but the final SEM models use topic salience as the central modelling input.
-

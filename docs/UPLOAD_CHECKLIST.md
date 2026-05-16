@@ -21,6 +21,7 @@ The repository includes:
 - Topic codebook and topic mapping helper files.
 - Selected model output summaries.
 - Selected visualization PNGs.
+- Diagnostic stance-validation files documenting why stance was not used in the final SEM models.
 
 ## Not Included Intentionally
 
@@ -32,4 +33,3 @@ The repository does not include:
 - Thesis Word drafts.
 - Large ZIP archives.
 - RStudio session files.
-
