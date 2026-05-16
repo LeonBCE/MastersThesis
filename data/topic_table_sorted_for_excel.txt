@@ -9,5 +9,5 @@ Topic ID	Number of assigned tweets	Keywords	Final treatment
 14	182,439	Inflation, gas prices, economy, corporate greed	Retained as Economy and inflation
 15	477,344	Weird, weirdo, did, wtf	Excluded as meme/rhetorical noise
 17	178,106	Tax cuts, tax breaks, taxpayers, IRS, debt	Retained as Economy and tax policy
-18	90,228	COVID, pandemic, flu, vaccines, virus	Retained as Domestic Policy and COVID
-19	42,144	Medicare, Medicaid, healthcare, pharma, insurance	Retained as Domestic Policy and healthcare
+18	90,228	COVID, pandemic, flu, vaccines, virus	Retained as Public Health and COVID
+19	42,144	Medicare, Medicaid, healthcare, pharma, insurance	Retained as Public Health and healthcare
